@@ -4,24 +4,24 @@ package sdl_painter
 
 import sdl "vendor:sdl3"
 
-BlendMode :: enum u32 {
-	NONE                = 0,
-	BLEND               = 1,
-	BLEND_PREMULTIPLIED = 16,
-	ADD                 = 2,
-	ADD_PREMULTIPLIED   = 32,
-	MOD                 = 4,
-	MUL                 = 8,
-	SIZE                = 7,
+Blend_Mode :: enum u32 {
+	None                = 0,
+	Blend               = 1,
+	Blend_Premultiplied = 16,
+	Add                 = 2,
+	Add_Premultiplied   = 32,
+	Mod                 = 4,
+	Mul                 = 8,
+	Size                = 7,
 }
 
-PrimitiveType :: enum u32 {
-	TRIANGLES      = 0,
-	TRIANGLE_STRIP = 1,
-	LINES          = 2,
-	LINE_STRIP     = 3,
-	POINTS         = 4,
-	SIZE           = 5,
+Primitive_Type :: enum u32 {
+	Triangles      = 0,
+	Triangle_Strip = 1,
+	Lines          = 2,
+	Line_Strip     = 3,
+	Points         = 4,
+	Size           = 5,
 }
 
 Pipeline :: struct {
@@ -30,7 +30,7 @@ Pipeline :: struct {
 
 // Create a graphics pipeline, Returns an invalid pipeline if creation failed,
 // Use GetLastError() to get more information about the error.
-CreatePipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: PrimitiveType, blend_mode: BlendMode) -> Pipeline {
+create_pipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> Pipeline {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 
 	// Location 0 packs position.xy + texcoord as one FLOAT4 ("coord" in
@@ -67,8 +67,8 @@ CreatePipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primiti
 	}
 
 	pipeline_create_info := sdl.GPUGraphicsPipelineCreateInfo{
-		vertex_shader      = GetGPUShader(shader_vert),
-		fragment_shader    = GetGPUShader(shader_frag),
+		vertex_shader      = get_gpu_shader(shader_vert),
+		fragment_shader    = get_gpu_shader(shader_frag),
 		vertex_input_state = vertex_input_state,
 		primitive_type     = sdl.GPUPrimitiveType(primitive_type),
 		target_info        = target_info,
@@ -77,13 +77,13 @@ CreatePipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primiti
 	pipeline := sdl.CreateGPUGraphicsPipeline(_pipeline_ctx.gpu_device, pipeline_create_info)
 
 	if pipeline == nil {
-		_set_error(.CREATE_PIPELINE_FAILED)
+		_set_error(.Create_Pipeline_Failed)
 		return Pipeline{id = INVALID_ID}
 	}
 
-	slot := AcquirePoolSlot(_pipeline_ctx.pool)
+	slot := acquire_pool_slot(_pipeline_ctx.pool)
 	if slot == POOL_INVALID_SLOT {
-		_set_error(.CREATE_PIPELINE_FAILED)
+		_set_error(.Create_Pipeline_Failed)
 		return Pipeline{id = INVALID_ID}
 	}
 
@@ -91,23 +91,23 @@ CreatePipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primiti
 		pipeline = pipeline,
 	}
 
-	return Pipeline{id = GeneratePoolId(_pipeline_ctx.pool, slot)}
+	return Pipeline{id = generate_pool_id(_pipeline_ctx.pool, slot)}
 }
 
 // Destroy a graphics pipeline and free its resources.
-DestroyPipeline :: proc(pipeline: Pipeline) {
+destroy_pipeline :: proc(pipeline: Pipeline) {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 
 	if pipeline.id == INVALID_ID {
 		return
 	}
 
-	slot := PoolIdToSlot(pipeline.id)
+	slot := pool_id_to_slot(pipeline.id)
 
 	inner_pipeline := _pipeline_ctx.pipelines[slot].pipeline
 	sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, inner_pipeline)
 
-	ReleasePoolSlot(_pipeline_ctx.pool, slot)
+	release_pool_slot(_pipeline_ctx.pool, slot)
 
 	_pipeline_ctx.pipelines[slot] = _Pipeline{
 		pipeline = nil,
@@ -116,27 +116,25 @@ DestroyPipeline :: proc(pipeline: Pipeline) {
 
 // Get the GPU graphics pipeline associated with a SDL_gp pipeline. Returns
 // NULL if the pipeline is invalid.
-GetGPUPipeline :: proc(pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
+get_gpu_pipeline :: proc(pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 
 	if pipeline.id == INVALID_ID {
 		return nil
 	}
 
-	slot := PoolIdToSlot(pipeline.id)
+	slot := pool_id_to_slot(pipeline.id)
 	return _pipeline_ctx.pipelines[slot].pipeline
 }
 
 // Pipeline (Private)
 // ----------------------------------------------------------------------------
 
-@(private)
 _Pipeline :: struct {
 	pipeline: ^sdl.GPUGraphicsPipeline,
 }
 
-@(private)
-_PipelineContext :: struct {
+_Pipeline_Context :: struct {
 	initialized: u32,
 	pipelines:   []_Pipeline,
 	pool:        ^Pool,
@@ -144,12 +142,10 @@ _PipelineContext :: struct {
 	window:      ^sdl.Window,
 }
 
-@(private)
-_pipeline_ctx: _PipelineContext
+_pipeline_ctx: _Pipeline_Context
 
 // Setup pipeline resources management.
-@(private)
-_PipelineSetup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) {
+_pipeline_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) {
 	assert(_pipeline_ctx.initialized == 0)
 	assert(gpu_device != nil)
 	assert(window != nil)
@@ -158,26 +154,24 @@ _PipelineSetup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) {
 	_pipeline_ctx.gpu_device = gpu_device
 	_pipeline_ctx.window = window
 
-	_pipeline_ctx.pool = CreatePool(PIPELINE_MAX)
+	_pipeline_ctx.pool = create_pool(PIPELINE_MAX)
 	_pipeline_ctx.pipelines = make([]_Pipeline, PIPELINE_MAX)
 }
 
 // Shutdown pipeline resources management and free resources.
-@(private)
-_PipelineShutdown :: proc() {
+_pipeline_shutdown :: proc() {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 	_pipeline_ctx.initialized = 0
 
-	DestroyPool(_pipeline_ctx.pool)
+	destroy_pool(_pipeline_ctx.pool)
 	delete(_pipeline_ctx.pipelines)
 }
 
-@(private)
-_pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendState {
+_pipeline_blend_state :: proc(blend_mode: Blend_Mode) -> sdl.GPUColorTargetBlendState {
 	blend := sdl.GPUColorTargetBlendState{}
 
 	switch blend_mode {
-	case .BLEND:
+	case .Blend:
 		blend.enable_blend          = true
 		blend.src_color_blendfactor = .SRC_ALPHA
 		blend.dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA
@@ -185,7 +179,7 @@ _pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendS
 		blend.src_alpha_blendfactor = .ONE
 		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
 		blend.alpha_blend_op        = .ADD
-	case .BLEND_PREMULTIPLIED:
+	case .Blend_Premultiplied:
 		blend.enable_blend          = true
 		blend.src_color_blendfactor = .ONE
 		blend.dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA
@@ -193,7 +187,7 @@ _pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendS
 		blend.src_alpha_blendfactor = .ONE
 		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
 		blend.alpha_blend_op        = .ADD
-	case .ADD:
+	case .Add:
 		blend.enable_blend          = true
 		blend.src_color_blendfactor = .SRC_ALPHA
 		blend.dst_color_blendfactor = .ONE
@@ -201,7 +195,7 @@ _pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendS
 		blend.src_alpha_blendfactor = .ZERO
 		blend.dst_alpha_blendfactor = .ONE
 		blend.alpha_blend_op        = .ADD
-	case .ADD_PREMULTIPLIED:
+	case .Add_Premultiplied:
 		blend.enable_blend          = true
 		blend.src_color_blendfactor = .ONE
 		blend.dst_color_blendfactor = .ONE
@@ -209,7 +203,7 @@ _pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendS
 		blend.src_alpha_blendfactor = .ZERO
 		blend.dst_alpha_blendfactor = .ONE
 		blend.alpha_blend_op        = .ADD
-	case .MOD:
+	case .Mod:
 		blend.enable_blend          = true
 		blend.src_color_blendfactor = .DST_COLOR
 		blend.dst_color_blendfactor = .ZERO
@@ -217,7 +211,7 @@ _pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendS
 		blend.src_alpha_blendfactor = .ZERO
 		blend.dst_alpha_blendfactor = .ONE
 		blend.alpha_blend_op        = .ADD
-	case .MUL:
+	case .Mul:
 		blend.enable_blend          = true
 		blend.src_color_blendfactor = .DST_COLOR
 		blend.dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA
@@ -225,7 +219,7 @@ _pipeline_blend_state :: proc(blend_mode: BlendMode) -> sdl.GPUColorTargetBlendS
 		blend.src_alpha_blendfactor = .DST_ALPHA
 		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
 		blend.alpha_blend_op        = .ADD
-	case .NONE, .SIZE: // default in C covers NONE and any other value
+	case .None, .Size: // default in C covers NONE and any other value
 		blend.enable_blend          = false
 		blend.src_color_blendfactor = .ONE
 		blend.dst_color_blendfactor = .ZERO

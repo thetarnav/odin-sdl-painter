@@ -12,7 +12,7 @@ sample_rect_setup :: proc () {
 		sdl.Log("Failed to load image: %s", sdl.GetError())
 	}
 
-	image_rect = gp.CreateImage(surface)
+	image_rect = gp.create_image(surface)
 
 	sdl.DestroySurface(surface)
 }
@@ -27,54 +27,54 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 
 	// Draw a red filled rectangle.
 	{
-		gp.Viewport(0, 0, i32(h.x), window_height)
-		gp.SetColor({10, 10, 10, 255})
-		gp.Clear()
+		gp.set_viewport(0, 0, i32(h.x), window_height)
+		gp.set_color({10, 10, 10, 255})
+		gp.clear()
 
-		gp.PushTransform()
+		gp.push_transform()
 		{
-			gp.SetColor({255, 0, 0, 255})
+			gp.set_color({255, 0, 0, 255})
 
 			// Move to the left area of the viewport
-			gp.Translate(f32(h.x) * 0.5, f32(h.y))
+			gp.translate(f32(h.x) * 0.5, f32(h.y))
 
 			half_shape := f32(window.x) * 0.15 // 15% of the viewport width
 
-			gp.DrawFilledRect({-half_shape, -half_shape, half_shape * 2, half_shape * 2})
+			gp.draw_rect(gp.Rect_Vec2{{-half_shape,-half_shape},{half_shape*2,half_shape*2}})
 		}
-		gp.PopTransform()
+		gp.pop_transform()
 	}
 
 	// Draw a textured rectangle keeping it's original color.
 	{
-		gp.Viewport(i32(h.x), 0, i32(h.x), window_height)
-		gp.SetColor({20, 20, 20, 255})
-		gp.Clear()
+		gp.set_viewport(i32(h.x), 0, i32(h.x), window_height)
+		gp.set_color({20, 20, 20, 255})
+		gp.clear()
 
-		gp.PushTransform()
+		gp.push_transform()
 		{
-			gp.SetColor(255)
+			gp.set_color(255)
 
 			// Move to the right area of the viewport
-			gp.Translate(f32(h.x) * 0.5, f32(h.y))
+			gp.translate(f32(h.x) * 0.5, f32(h.y))
 
-			gp.SetImage(0, image_rect)
+			gp.set_image(0, image_rect)
 
-			width  := gp.GetImageWidth(image_rect)
-			height := gp.GetImageHeight(image_rect)
+			width  := gp.get_image_width(image_rect)
+			height := gp.get_image_height(image_rect)
 			size := gp.Vec2{f32(width), f32(height)}
 
 			scale := size * 2
 
-			gp.DrawTexturedRect(0, {
-				src = {0, 0, **size},
-				dst = {**(-scale/2), **scale},
+			gp.draw_textured_rect(0, {
+				src = {{0, 0}, size},
+				dst = {-scale/2, scale},
 			})
 		}
-		gp.PopTransform();
+		gp.pop_transform();
 	}
 }
 
 sample_rect_shutdown :: proc () {
-	gp.DestroyImage(image_rect)
+	gp.destroy_image(image_rect)
 }

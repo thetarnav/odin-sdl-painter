@@ -1,0 +1,61 @@
+# odin-sdl-painter
+
+Idiomatic Odin immediate-mode 2D painter over SDL3 GPU (`vendor:sdl3`, no C toolchain).
+
+## Features
+
+- Batched rect / textured-rect / line / triangle / point drawing
+- Transform stack (`push_transform`, `translate`, `rotate`, `scale`) with 2x3 matrix core
+- Custom pipelines with uniforms, blend modes, viewports, scissors
+- Image management with mid-frame creation support
+
+## Requirements
+
+- Odin `dev-2026-09` or newer
+- SDL3 (via Odin's `vendor:sdl3`)
+
+## Quickstart
+
+```odin
+import gp "path/to/sdl_painter"
+
+// once
+gp.setup(&gp.Desc{window = window, gpu_device = device})
+
+// per frame
+gp.begin(width, height)
+gp.set_color({255, 0, 0, 255})
+gp.draw_rect({{10, 10}, {50, 50}})
+swapchain_texture := /* acquire */
+gp.flush(cmd_buffer, swapchain_texture)
+gp.end()
+
+// at exit
+gp.shutdown()
+```
+
+## Building the example
+
+```sh
+odin build example/ -out:/tmp/painter-example
+odin run example/   # needs a display; arrow keys switch samples
+```
+
+## API overview
+
+| Area | Procs |
+|---|---|
+| Frame | `setup`, `begin`, `flush`, `end`, `shutdown` |
+| Draw | `draw_rect`, `draw_textured_rect`, `draw_line`, `draw_triangle`, `draw_point`, `draw` (+ batch plurals in each group) |
+| State | `set_color`, `set_blend_mode`, `set_image`, `set_viewport`, `set_scissor`, `reset_state` |
+| Transform | `push_transform`, `pop_transform`, `translate`, `rotate`, `scale`, `get_matrix`, `set_matrix` |
+
+Sizing knobs (`IMAGE_MAX`, `VERTICES_MAX`, …) are `#config` — tune with `-define:IMAGE_MAX=128`.
+
+## Shaders
+
+`shaders/` ships opaque precompiled blobs (`.spv`/`.msl`/`.dxil`) selected at runtime by GPU backend; the `.glsl` sources are reference only and are never compiled.
+
+## License
+
+MIT — Copyright (c) 2026 Damian Tarnawski, portions by nsix. See `LICENSE.txt`.

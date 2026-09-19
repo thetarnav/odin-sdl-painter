@@ -25,16 +25,16 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 	// ===============================================================
 	// Draw points
 	{
-		gp.Viewport(0, 0, i32(h.x), i32(h.y))
-		gp.SetColor({10, 10, 10, 255})
-		gp.Clear()
+		gp.set_viewport(0, 0, i32(h.x), i32(h.y))
+		gp.set_color({10, 10, 10, 255})
+		gp.clear()
 
-		gp.SetColor(255)
+		gp.set_color(255)
 
 		// -31 instead of -32 to draw points at the edges of the viewport
 		for y := 32; y < h.y - 31; y += 8 {
 			for x := 32; x < h.x - 31; x += 8 {
-				gp.DrawPoint({f32(x), f32(y)})
+				gp.draw_point({f32(x), f32(y)})
 			}
 		}
 	}
@@ -43,37 +43,37 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 	// ===============================================================
 	// Triangles
 	{
-		gp.Viewport(i32(h.x), 0, i32(h.x), i32(h.y))
-		gp.SetColor({20, 20, 20, 255})
-		gp.Clear()
+		gp.set_viewport(i32(h.x), 0, i32(h.x), i32(h.y))
+		gp.set_color({20, 20, 20, 255})
+		gp.clear()
 
-		gp.PushTransform()
+		gp.push_transform()
 		{
 			// Move to the center of the left area of the viewport
-			gp.Translate(**(gp.Vec2(h) * {0.25, 0.5}))
+			gp.translate(gp.Vec2(h) * {0.25, 0.5})
 
 			// Oscillate the scale between 0.75 and 1.25
-			gp.Scale(1.0 + 0.25 * osc_1, 1.0 + 0.25 * osc_1)
+			gp.scale(1.0 + 0.25 * osc_1, 1.0 + 0.25 * osc_1)
 
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
-			gp.SetColor({255, 0, 255, 255})
+			gp.set_color({255, 0, 255, 255})
 
-			gp.DrawFilledTriangle({
+			gp.draw_triangle({
 				a = {          0, -half_shape},
 				b = { half_shape,  half_shape},
 				c = {-half_shape,  half_shape},
 			})
 		}
-		gp.PopTransform()
+		gp.pop_transform()
 
-		gp.PushTransform()
+		gp.push_transform()
 		{
 			// Move to the center of the right area of the viewport
-			gp.Translate(**(gp.Vec2(h) * {0.75, 0.5}))
+			gp.translate(gp.Vec2(h) * {0.75, 0.5})
 
 			// Oscillate the scale between 0.75 and 1.25
-			gp.Scale(1.0 + 0.25 * -osc_1, 1.0 + 0.25 * -osc_1)
+			gp.scale(1.0 + 0.25 * -osc_1, 1.0 + 0.25 * -osc_1)
 
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
@@ -98,31 +98,31 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 				v.color    = colors[i]
 			}
 
-			gp.Draw(.TRIANGLE_STRIP, auto_cast &vertex_buffer, 3)
+			gp.draw(.Triangle_Strip, auto_cast &vertex_buffer, 3)
 		}
-		gp.PopTransform()
+		gp.pop_transform()
 	}
 
 	// Quadrant 3
 	// ===============================================================
 	// Draw tiangles fans
 	{
-		gp.Viewport(0, i32(h.y), i32(h.x), i32(h.y))
-		gp.SetColor({20, 20, 20, 255})
-		gp.Clear()
+		gp.set_viewport(0, i32(h.y), i32(h.x), i32(h.y))
+		gp.set_color({20, 20, 20, 255})
+		gp.clear()
 
 		// Hexagon
-		gp.PushTransform()
+		gp.push_transform()
 		{
 			// Move the the center of the left area of the viewport
-			gp.Translate(f32(h.x) * 0.25, f32(h.y) * 0.5)
+			gp.translate(f32(h.x) * 0.25, f32(h.y) * 0.5)
 
 			// Rotate 90 degrees clockwise and counter-clockwise every second
-			gp.Rotate(osc_1 * math.PI * 0.5)
+			gp.rotate(osc_1 * math.PI * 0.5)
 
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
-			gp.SetColor({0, 255, 255, 255})
+			gp.set_color({0, 255, 255, 255})
 
 			step := f32(2.0 * math.PI) / 6.0
 
@@ -142,15 +142,15 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 				}
 			}
 
-			gp.DrawFilledTrianglesStrip(raw_data(points_buffer), len(points_buffer))
+			gp.draw_triangle_strip(raw_data(points_buffer), len(points_buffer))
 		}
-		gp.PopTransform()
+		gp.pop_transform()
 
 		// Color wheel with 64 segments
-		gp.PushTransform()
+		gp.push_transform()
 		{
 			// Move to the center of the right area of the viewport
-			gp.Translate(f32(h.x) * 0.75, f32(h.y) * 0.5)
+			gp.translate(f32(h.x) * 0.75, f32(h.y) * 0.5)
 
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
@@ -180,38 +180,38 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 				}
 			}
 
-			gp.Draw(.TRIANGLE_STRIP, raw_data(vertex_buffer), len(vertex_buffer))
+			gp.draw(.Triangle_Strip, raw_data(vertex_buffer), len(vertex_buffer))
 		}
-		gp.PopTransform()
+		gp.pop_transform()
 	}
 
 	// Quadrant 4
 	// ===============================================================
 	// Draw lines
 	{
-		gp.Viewport(i32(h.x), i32(h.y), i32(h.x), i32(h.y))
-		gp.SetColor({10, 10, 10, 255})
-		gp.Clear()
+		gp.set_viewport(i32(h.x), i32(h.y), i32(h.x), i32(h.y))
+		gp.set_color({10, 10, 10, 255})
+		gp.clear()
 
-		gp.PushTransform()
+		gp.push_transform()
 		{
 			// Move to the center of the viewport
-			gp.Translate(**(gp.Vec2(h) * 0.5))
+			gp.translate(gp.Vec2(h) * 0.5)
 
 			// Rotate indefinitely
-			gp.Rotate(f32(time) * math.PI * 0.25)
+			gp.rotate(f32(time) * math.PI * 0.25)
 
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
-			gp.SetColor({255, 255, 0, 255})
+			gp.set_color({255, 255, 0, 255})
 
-			gp.DrawLine({a = -half_shape,
+			gp.draw_line({a = -half_shape,
 			             b =  half_shape})
 
-			gp.DrawLine({a = {half_shape, -half_shape},
+			gp.draw_line({a = {half_shape, -half_shape},
 			             b = {-half_shape, half_shape}})
 		}
-		gp.PopTransform()
+		gp.pop_transform()
 	}
 }
 

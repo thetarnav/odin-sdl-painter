@@ -15,13 +15,13 @@ WINDOW_HEIGHT :: 576
 DELTA_TIME_MS :: 16 // ~60 FPS
 
 Sample_Type :: enum {
-	RECT,
-	PRIMITIVE,
-	BLEND,
-	SPRITE,
-	LOAD_IMAGES,
+	Rect,
+	Primitive,
+	Blend,
+	Sprite,
+	Load_Images,
 }
-_current_test := Sample_Type.RECT
+_current_test := Sample_Type.Rect
 
 Context :: struct {
 	gpu_device:        ^sdl.GPUDevice,
@@ -85,7 +85,7 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 	_ = sdl.SetGPUSwapchainParameters(_context.gpu_device, _context.window, .SDR, present_mode);
 
 	// Setup sdl.gp
-	gp.Setup(&gp.Desc{
+	gp.setup(&gp.Desc{
 		window     = _context.window,
 		gpu_device = _context.gpu_device,
 	})
@@ -109,18 +109,18 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	// Acquire a command buffer for the current frame
 	cmd_buffer := sdl.AcquireGPUCommandBuffer(_context.gpu_device)
 
-	gp.Begin(WINDOW_WIDTH, WINDOW_HEIGHT)
+	gp.begin(WINDOW_WIDTH, WINDOW_HEIGHT)
 
 	{
-		gp.SetColor({0, 0, 0, 255})
-		gp.Clear()
+		gp.set_color({0, 0, 0, 255})
+		gp.clear()
 
 		switch (_current_test) {
-		case .RECT:        sample_rect_render(DELTA_TIME_MS)
-		case .PRIMITIVE:   sample_primitive_render(DELTA_TIME_MS)
-		case .SPRITE:      sample_sprite_render(DELTA_TIME_MS)
-		case .BLEND:       sample_blend_render(DELTA_TIME_MS)
-		case .LOAD_IMAGES: sample_load_images_render(DELTA_TIME_MS)
+		case .Rect:        sample_rect_render(DELTA_TIME_MS)
+		case .Primitive:   sample_primitive_render(DELTA_TIME_MS)
+		case .Sprite:      sample_sprite_render(DELTA_TIME_MS)
+		case .Blend:       sample_blend_render(DELTA_TIME_MS)
+		case .Load_Images: sample_load_images_render(DELTA_TIME_MS)
 		}
 
 		// Acquire the swapchain texture for the current frame
@@ -128,10 +128,10 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 		_ = sdl.WaitAndAcquireGPUSwapchainTexture(
 			cmd_buffer, _context.window, &swapchain_texture, nil, nil)
 
-		gp.Flush(cmd_buffer, swapchain_texture)
+		gp.flush(cmd_buffer, swapchain_texture)
 	}
 
-	gp.End()
+	gp.end()
 	_ = sdl.SubmitGPUCommandBuffer(cmd_buffer)
 
 	sdl.Delay(DELTA_TIME_MS)
@@ -168,7 +168,7 @@ app_quit :: proc "c" (appstate: rawptr, result: sdl.AppResult) {
 	sample_sprite_shutdown()
 	sample_load_images_shutdown()
 
-	gp.Shutdown()
+	gp.shutdown()
 
 	if _context.window != nil {
 		sdl.DestroyWindow(_context.window)

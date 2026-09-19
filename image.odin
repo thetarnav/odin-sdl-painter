@@ -14,11 +14,11 @@ import "core:c"
 import "core:mem"
 
 Sampler :: enum u32 {
-	POINT_CLAMP  = 0,
-	POINT_WRAP   = 1,
-	LINEAR_CLAMP = 2,
-	LINEAR_WRAP  = 3,
-	SIZE         = 4,
+	Point_Clamp  = 0,
+	Point_Wrap   = 1,
+	Linear_Clamp = 2,
+	Linear_Wrap  = 3,
+	Size         = 4,
 }
 
 Image :: struct {
@@ -27,7 +27,7 @@ Image :: struct {
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
-CreateImage :: proc(surface: ^sdl.Surface) -> Image {
+create_image :: proc(surface: ^sdl.Surface) -> Image {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 	assert(_img_ctx.pool != nil)
 	assert(_img_ctx.images_count < IMAGE_MAX, "Increase IMAGE_MAX to create more images")
@@ -52,7 +52,7 @@ CreateImage :: proc(surface: ^sdl.Surface) -> Image {
 		inner_surface = sdl.ConvertSurface(surface, pixel_format)
 
 		if inner_surface == nil {
-			_set_error(.CREATE_IMAGE_FAILED)
+			_set_error(.Create_Image_Failed)
 			return Image{id = INVALID_ID}
 		}
 
@@ -76,16 +76,16 @@ CreateImage :: proc(surface: ^sdl.Surface) -> Image {
 	texture := sdl.CreateGPUTexture(_img_ctx.gpu_device, texture_create_info)
 
 	if texture == nil {
-		_set_error(.CREATE_IMAGE_FAILED)
+		_set_error(.Create_Image_Failed)
 		return Image{id = INVALID_ID}
 	}
 
 	// Allocate image from resource
 
-	slot := AcquirePoolSlot(_img_ctx.pool)
+	slot := acquire_pool_slot(_img_ctx.pool)
 	if slot == POOL_INVALID_SLOT {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
-		_set_error(.CREATE_IMAGE_FAILED)
+		_set_error(.Create_Image_Failed)
 		return Image{id = INVALID_ID}
 	}
 
@@ -104,13 +104,13 @@ CreateImage :: proc(surface: ^sdl.Surface) -> Image {
 	pixels_copy, alloc_err := mem.alloc(int(size))
 	if alloc_err != .None || pixels_copy == nil {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
-		ReleasePoolSlot(_img_ctx.pool, slot)
-		_set_error(.CREATE_IMAGE_FAILED)
+		release_pool_slot(_img_ctx.pool, slot)
+		_set_error(.Create_Image_Failed)
 		return Image{id = INVALID_ID}
 	}
 	mem.copy(pixels_copy, inner_surface.pixels, int(size))
 
-	_img_ctx.pending[_img_ctx.pending_count] = _ImagePending{
+	_img_ctx.pending[_img_ctx.pending_count] = _Image_Pending{
 		pixels = pixels_copy,
 		width  = u32(inner_surface.w),
 		height = u32(inner_surface.h),
@@ -123,11 +123,11 @@ CreateImage :: proc(surface: ^sdl.Surface) -> Image {
 
 	_img_ctx.images_count += 1
 
-	return Image{id = GeneratePoolId(_img_ctx.pool, slot)}
+	return Image{id = generate_pool_id(_img_ctx.pool, slot)}
 }
 
 // Destroy an image and free its resources.
-DestroyImage :: proc(image: Image) {
+destroy_image :: proc(image: Image) {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
 	// TODO find a way to know if the image was already destroyed
@@ -136,8 +136,8 @@ DestroyImage :: proc(image: Image) {
 		return
 	}
 
-	slot := PoolIdToSlot(image.id)
-	ReleasePoolSlot(_img_ctx.pool, slot)
+	slot := pool_id_to_slot(image.id)
+	release_pool_slot(_img_ctx.pool, slot)
 
 	inner_image := _img_ctx.images[slot]
 	sdl.ReleaseGPUTexture(_img_ctx.gpu_device, inner_image.texture)
@@ -151,53 +151,51 @@ DestroyImage :: proc(image: Image) {
 
 // Get the GPU texture associated with an image. Returns NULL if the image is
 // invalid.
-GetImageGPUTexture :: proc(image: Image) -> ^sdl.GPUTexture {
+get_image_gpu_texture :: proc(image: Image) -> ^sdl.GPUTexture {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
 	if image.id == INVALID_ID {
 		return nil
 	}
 
-	slot := PoolIdToSlot(image.id)
+	slot := pool_id_to_slot(image.id)
 	return _img_ctx.images[slot].texture
 }
 
 // Get the width of an image in pixels. Returns 0 if the image is invalid.
-GetImageWidth :: proc(image: Image) -> i32 {
+get_image_width :: proc(image: Image) -> i32 {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
 	if image.id == INVALID_ID {
 		return 0
 	}
 
-	slot := PoolIdToSlot(image.id)
+	slot := pool_id_to_slot(image.id)
 	return i32(_img_ctx.images[slot].width)
 }
 
 // Get the height of an image in pixels. Returns 0 if the image is invalid.
-GetImageHeight :: proc(image: Image) -> i32 {
+get_image_height :: proc(image: Image) -> i32 {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
 	if image.id == INVALID_ID {
 		return 0
 	}
 
-	slot := PoolIdToSlot(image.id)
+	slot := pool_id_to_slot(image.id)
 	return i32(_img_ctx.images[slot].height)
 }
 
 // Image (Private)
 // ----------------------------------------------------------------------------
 
-@(private)
 _Image :: struct {
 	texture: ^sdl.GPUTexture,
 	width:   u32,
 	height:  u32,
 }
 
-@(private)
-_ImagePending :: struct {
+_Image_Pending :: struct {
 	pixels: rawptr,
 	width:  u32,
 	height: u32,
@@ -205,11 +203,10 @@ _ImagePending :: struct {
 	bpp:    u8,
 }
 
-@(private)
-_ImageContext :: struct {
+_Image_Context :: struct {
 	initialized:                 u32,
 	images:                      []_Image,
-	pending:                     [IMAGE_MAX + 1]_ImagePending, // Images that are pending to be uploaded to the GPU + 1 for
+	pending:                     [IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
 	pending_count:               uint,
 	pool:                        ^Pool,
@@ -220,12 +217,10 @@ _ImageContext :: struct {
 	images_count:                uint,
 }
 
-@(private)
-_img_ctx: _ImageContext
+_img_ctx: _Image_Context
 
 // Setup image resources management.
-@(private)
-_ImageSetup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
+_image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 	assert(_img_ctx.initialized == 0)
 	assert(gpu_device != nil)
 
@@ -235,7 +230,7 @@ _ImageSetup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 	_img_ctx.window = window
 
 	// + 1 for the white image
-	_img_ctx.pool = CreatePool(IMAGE_MAX + 1)
+	_img_ctx.pool = create_pool(IMAGE_MAX + 1)
 
 	_img_ctx.images = make([]_Image, IMAGE_MAX + 1)
 
@@ -246,7 +241,7 @@ _ImageSetup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 
 	_img_ctx.texture_transfer_buffer = sdl.CreateGPUTransferBuffer(gpu_device, transfer_buffer_create_info)
 	if _img_ctx.texture_transfer_buffer == nil {
-		_set_error(.SETUP_IMAGE_FAILED)
+		_set_error(.Setup_Image_Failed)
 		return false
 	}
 	_img_ctx.texture_transfer_buffer_size = TEXTURE_SIZE_MAX
@@ -255,12 +250,11 @@ _ImageSetup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 }
 
 // Shutdown image resources management and free resources.
-@(private)
-_ImageShutdown :: proc() {
+_image_shutdown :: proc() {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 	_img_ctx.initialized = 0
 
-	DestroyPool(_img_ctx.pool)
+	destroy_pool(_img_ctx.pool)
 	delete(_img_ctx.images)
 	sdl.ReleaseGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
 }
@@ -269,8 +263,7 @@ _ImageShutdown :: proc() {
 // The texture transfer buffer will automatically be resized if needed.
 // Returns false if an error occurred, use GetLastError() to get more
 // information about the error.
-@(private)
-_ImageFlush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer) {
+_image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer) {
 	if _img_ctx.pending_count == 0 {
 		return
 	}
@@ -311,7 +304,7 @@ _ImageFlush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer) {
 
 		_img_ctx.texture_transfer_buffer = sdl.CreateGPUTransferBuffer(_img_ctx.gpu_device, transfer_buffer_create_info)
 		if _img_ctx.texture_transfer_buffer == nil {
-			_set_error(.FLUSH_IMAGE_FAILED)
+			_set_error(.Flush_Image_Failed)
 			_img_ctx.texture_transfer_buffer_size = 0
 			return
 		}

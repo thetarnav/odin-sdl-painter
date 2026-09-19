@@ -6,20 +6,20 @@ import gp ".."
 
 draw_rects :: proc (brightness, alpha: u8) {
 	// Red rectangle
-	gp.SetColor({brightness, 0, 0, alpha})
-	gp.DrawFilledRect({10, 10, 50, 50})
+	gp.set_color({brightness, 0, 0, alpha})
+	gp.draw_rect(gp.Rect_Vec2{{10,10},{50,50}})
 
-	gp.Translate(10, 10)
+	gp.translate(10, 10)
 
 	// Green rectangle
-	gp.SetColor({0, brightness, 0, alpha})
-	gp.DrawFilledRect({10, 10, 50, 50})
+	gp.set_color({0, brightness, 0, alpha})
+	gp.draw_rect(gp.Rect_Vec2{{10,10},{50,50}})
 
-	gp.Translate(10, 10)
+	gp.translate(10, 10)
 
 	// Blue rectangle
-	gp.SetColor({0, 0, brightness, alpha})
-	gp.DrawFilledRect({10, 10, 50, 50})
+	gp.set_color({0, 0, brightness, alpha})
+	gp.draw_rect(gp.Rect_Vec2{{10,10},{50,50}})
 }
 
 draw_checkboard :: proc (width, height: int) {
@@ -30,8 +30,8 @@ draw_checkboard :: proc (width, height: int) {
 			color := is_white ? \
 				sdl.Color{150, 150, 150, 255} : \
 				sdl.Color{50, 50, 50, 255}
-			gp.SetColor(color)
-			gp.DrawFilledRect({f32(x), f32(y), f32(size), f32(size)})
+			gp.set_color(color)
+			gp.draw_rect(gp.Rect_Vec2{{f32(x),f32(y)},{f32(size),f32(size)}})
 		}
 	}
 }
@@ -46,54 +46,54 @@ sample_blend_render :: proc (delta_time_ms: u64) {
 	sdl.GetWindowSize(_context.window, &window_width, &window_height)
 	window := [2]int{int(window_width), int(window_height)}
 
-	gp.SetColor({0,0,0,255})
-	gp.Clear()
+	gp.set_color({0,0,0,255})
+	gp.clear()
 
-	gp.SetBlendMode(.NONE)
+	gp.set_blend_mode(.None)
 
 	draw_checkboard(**window)
 
-	gp.SetBlendMode(.NONE)
-	gp.PushTransform()
-	gp.Translate(0, 0)
+	gp.set_blend_mode(.None)
+	gp.push_transform()
+	gp.translate(0, 0)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 
-	gp.SetBlendMode(.BLEND)
-	gp.PushTransform()
-	gp.Translate(80, 0)
+	gp.set_blend_mode(.Blend)
+	gp.push_transform()
+	gp.translate(80, 0)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 
-	gp.SetBlendMode(.BLEND_PREMULTIPLIED)
-	gp.PushTransform()
-	gp.Translate(160, 0)
+	gp.set_blend_mode(.Blend_Premultiplied)
+	gp.push_transform()
+	gp.translate(160, 0)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 
-	gp.SetBlendMode(.ADD)
-	gp.PushTransform()
-	gp.Translate(80, 80)
+	gp.set_blend_mode(.Add)
+	gp.push_transform()
+	gp.translate(80, 80)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 
-	gp.SetBlendMode(.ADD_PREMULTIPLIED)
-	gp.PushTransform()
-	gp.Translate(160, 80)
+	gp.set_blend_mode(.Add_Premultiplied)
+	gp.push_transform()
+	gp.translate(160, 80)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 
-	gp.SetBlendMode(.MOD)
-	gp.PushTransform()
-	gp.Translate(80, 160)
+	gp.set_blend_mode(.Mod)
+	gp.push_transform()
+	gp.translate(80, 160)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 
-	gp.SetBlendMode(.MUL)
-	gp.PushTransform()
-	gp.Translate(160, 160)
+	gp.set_blend_mode(.Mul)
+	gp.push_transform()
+	gp.translate(160, 160)
 	draw_rects(brightness, alpha)
-	gp.PopTransform()
+	gp.pop_transform()
 }
 
 sample_blend_shutdown :: proc () {}
