@@ -172,8 +172,8 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 
 	_gp.desc.max_vertices = VERTICES_MAX if desc.max_vertices == 0 else desc.max_vertices
 	_gp.desc.max_commands = COMMANDS_MAX if desc.max_commands == 0 else desc.max_commands
-	_gp.desc.window = desc.window
-	_gp.desc.gpu_device = desc.gpu_device
+	_gp.desc.window       = desc.window
+	_gp.desc.gpu_device   = desc.gpu_device
 
 	_gp.vertices = make([dynamic]Vertex,   0, int(_gp.desc.max_vertices), allocator)
 	_gp.commands = make([dynamic]_Command, 0, int(_gp.desc.max_commands), allocator)
@@ -366,12 +366,12 @@ begin :: proc (size: Vec2i) -> bool {
 	_gp.state.mvp        = _gp.state.projection
 
 	_gp.state.texture.count = 1
-	_gp.state.texture.images[0] = _gp.white_image
+	_gp.state.texture.images[0]   = _gp.white_image
 	_gp.state.texture.samplers[0] = _gp.nearest_samplers
 
 	invalid_image: Image
-	for i := 1; i < TEXTURE_SLOTS_MAX; i += 1 {
-		_gp.state.texture.images[i] = invalid_image
+	for i in 1 ..< TEXTURE_SLOTS_MAX {
+		_gp.state.texture.images[i]   = invalid_image
 		_gp.state.texture.samplers[i] = _gp.nearest_samplers
 	}
 
@@ -637,8 +637,8 @@ _prev_command :: proc (count: u32) -> ^_Command {
 @(private)
 _transform :: proc (m: Mat, dst, src: []Vec2) {
 	assert(len(dst) >= len(src))
-	for i in 0..<len(src) {
-		dst[i] = transform_point(m, src[i])
+	for &d, i in dst {
+		d = transform_point(m, src[i])
 	}
 }
 
@@ -649,11 +649,11 @@ _region_overlaps :: proc (a, b: _Region) -> bool {
 
 @(private)
 _merge_draw_commands :: proc (
-	pipeline: Pipeline,
-	texture: Texture_Uniform,
-	uniform: ^Uniform,
-	region: _Region,
-	vertex_index: u32,
+	pipeline:       Pipeline,
+	texture:        Texture_Uniform,
+	uniform:        ^Uniform,
+	region:         _Region,
+	vertex_index:   u32,
 	vertices_count: u32,
 ) -> bool {
 	vertices_count := vertices_count
@@ -662,9 +662,9 @@ _merge_draw_commands :: proc (
 	inter_cmd_count := 0
 
 	// Find commands that are mergable
-	lookup_depht := OPTIMIZER_DEPTH
-	for depth := 0; depth <= lookup_depht; depth += 1 {
-		cmd := _prev_command(u32(depth) + 1)
+	lookup_depht := u32(OPTIMIZER_DEPTH)
+	for depth in 0 ..= lookup_depht {
+		cmd := _prev_command(depth + 1)
 
 		if cmd == nil {
 			break // Stop on nonexistent command
