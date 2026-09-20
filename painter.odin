@@ -448,8 +448,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	}
 
 	// Flush commands
-	for i := base_command; i < end_command; i += 1 {
-		cmd := &_gp.commands[i]
+	for cmd in _gp.commands[base_command:end_command] {
 
 		#partial switch cmd.cmd {
 		case .Draw:
@@ -495,12 +494,12 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 				}
 
 				if image_id != {} {
-					image_bindings[j] = sdl.GPUTextureSamplerBinding{
+					image_bindings[j] = {
 						texture = get_image_gpu_texture(draw.texture.images[j]),
 						sampler = draw.texture.samplers[j],
 					}
 				} else {
-					image_bindings[j] = sdl.GPUTextureSamplerBinding{
+					image_bindings[j] = {
 						texture = get_image_gpu_texture(_gp.white_image),
 						sampler = _gp.nearest_samplers,
 					}
@@ -534,10 +533,9 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 			sdl.DrawGPUPrimitives(render_pass, draw.vertices_count, 1, 0, 0)
 		case .Viewport:
-			pos  := Vec2(cmd.args.viewport.pos)
-			size := Vec2(cmd.args.viewport.size)
-			viewport := sdl.GPUViewport{x = pos.x, y = pos.y, w = size.x, h = size.y}
-			sdl.SetGPUViewport(render_pass, viewport)
+			x, y := **Vec2(cmd.args.viewport.pos)
+			w, h := **Vec2(cmd.args.viewport.size)
+			sdl.SetGPUViewport(render_pass, {x=x, y=y, w=w, h=h})
 		case .Scissor:
 			sdl.SetGPUScissor(render_pass, {**cmd.args.scissor.pos, **cmd.args.scissor.size})
 		}
