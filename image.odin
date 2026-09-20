@@ -27,7 +27,7 @@ Image :: struct {
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
-create_image :: proc(surface: ^sdl.Surface) -> Image {
+create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> Image {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 	assert(_img_ctx.pool != nil)
 	assert(_img_ctx.images_count < IMAGE_MAX, "Increase IMAGE_MAX to create more images")
@@ -101,7 +101,7 @@ create_image :: proc(surface: ^sdl.Surface) -> Image {
 	bpp := format_details.bytes_per_pixel
 	size := uint(inner_surface.w) * uint(inner_surface.h) * uint(bpp)
 
-	pixels_copy, alloc_err := mem.alloc(int(size))
+	pixels_copy, alloc_err := mem.alloc(int(size), allocator = allocator)
 	if alloc_err != .None || pixels_copy == nil {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 		release_pool_slot(_img_ctx.pool, slot)
@@ -220,7 +220,8 @@ _Image_Context :: struct {
 _img_ctx: _Image_Context
 
 // Setup image resources management.
-_image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
+@(private)
+_image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) -> bool {
 	assert(_img_ctx.initialized == 0)
 	assert(gpu_device != nil)
 
@@ -230,9 +231,9 @@ _image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 	_img_ctx.window = window
 
 	// + 1 for the white image
-	_img_ctx.pool = create_pool(IMAGE_MAX + 1)
+	_img_ctx.pool = create_pool(IMAGE_MAX + 1, allocator)
 
-	_img_ctx.images = make([]_Image, IMAGE_MAX + 1)
+	_img_ctx.images = make([]_Image, IMAGE_MAX + 1, allocator)
 
 	transfer_buffer_create_info := sdl.GPUTransferBufferCreateInfo{
 		usage = .UPLOAD,
@@ -250,12 +251,13 @@ _image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 }
 
 // Shutdown image resources management and free resources.
-_image_shutdown :: proc() {
+@(private)
+_image_shutdown :: proc(allocator := context.allocator) {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 	_img_ctx.initialized = 0
 
-	destroy_pool(_img_ctx.pool)
-	delete(_img_ctx.images)
+	destroy_pool(_img_ctx.pool, allocator)
+	delete(_img_ctx.images, allocator)
 	sdl.ReleaseGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
 }
 
@@ -263,7 +265,8 @@ _image_shutdown :: proc() {
 // The texture transfer buffer will automatically be resized if needed.
 // Returns false if an error occurred, use GetLastError() to get more
 // information about the error.
-_image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer) {
+@(private)
+_image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.allocator) {
 	if _img_ctx.pending_count == 0 {
 		return
 	}
@@ -338,7 +341,7 @@ _image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer) {
 
 		offset += uint(size)
 
-		mem.free(pending.pixels)
+		mem.free(pending.pixels, allocator)
 		pending.pixels = nil
 	}
 

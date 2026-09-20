@@ -125,30 +125,33 @@ _Shader_Context :: struct {
 _shader_ctx: _Shader_Context
 
 // Setup shader resources management.
-_shader_setup :: proc(gpu_device: ^sdl.GPUDevice) {
+@(private)
+_shader_setup :: proc(gpu_device: ^sdl.GPUDevice, allocator := context.allocator) {
 	assert(_shader_ctx.initialized == 0)
 	assert(gpu_device != nil)
 
 	_shader_ctx.initialized = _INIT_COOKIE
 	_shader_ctx.gpu_device = gpu_device
 
-	_shader_ctx.pool = create_pool(SHADER_MAX)
-	_shader_ctx.shader = make([]_Shader, SHADER_MAX)
+	_shader_ctx.pool = create_pool(SHADER_MAX, allocator)
+	_shader_ctx.shader = make([]_Shader, SHADER_MAX, allocator)
 }
 
 // Shutdown shader resources management and free resources.
-_shader_shutdown :: proc() {
+@(private)
+_shader_shutdown :: proc(allocator := context.allocator) {
 	assert(_shader_ctx.initialized == _INIT_COOKIE)
 	_shader_ctx.initialized = 0
 
-	destroy_pool(_shader_ctx.pool)
-	delete(_shader_ctx.shader)
+	destroy_pool(_shader_ctx.pool, allocator)
+	delete(_shader_ctx.shader, allocator)
 }
 
 // Create the common painter vertex and fragment shaders, selecting the
 // precompiled bytecode matching the GPU backend (SPIRV → MSL → DXIL).
 // Called from painter Setup. On failure the painter is shut down,
 // matching the C Setup error paths (SDL_gp.h:2644-2680).
+@(private)
 _create_common_shaders :: proc(device: ^sdl.GPUDevice) -> (vert, frag: Shader, ok: bool) {
 	supported_formats := sdl.GetGPUShaderFormats(device)
 

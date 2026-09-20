@@ -24,14 +24,14 @@ Pool :: struct {
 
 // Create a pool with the specified number of slots (not counting the invalid
 // slot).
-create_pool :: proc(number_of_slots: int) -> ^Pool {
-	pool := new(Pool)
+create_pool :: proc(number_of_slots: int, allocator := context.allocator) -> ^Pool {
+	pool := new(Pool, allocator)
 
 	// +1 since slot 0 is reserved for invalid slot
 	pool.size = uint(number_of_slots + 1)
 	pool.free_stack_top = 0
-	pool.counters = make([^]u32, pool.size)
-	pool.free_stack = make([^]i32, number_of_slots)
+	pool.counters = make([^]u32, pool.size, allocator)
+	pool.free_stack = make([^]i32, number_of_slots, allocator)
 
 	for i := int(pool.size) - 1; i > 0; i -= 1 {
 		pool.free_stack[pool.free_stack_top] = i32(i)
@@ -42,11 +42,12 @@ create_pool :: proc(number_of_slots: int) -> ^Pool {
 	return pool
 }
 
-// Destroy a pool and free its resources.
-destroy_pool :: proc(pool: ^Pool) {
-	free(pool.counters)
-	free(pool.free_stack)
-	free(pool)
+// Destroy a pool and free its resources. The allocator must match the one
+// used in create_pool.
+destroy_pool :: proc(pool: ^Pool, allocator := context.allocator) {
+	free(pool.counters, allocator)
+	free(pool.free_stack, allocator)
+	free(pool, allocator)
 }
 
 // Acquire a slot from the pool and return its index. Returns

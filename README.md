@@ -47,10 +47,15 @@ odin run example/   # needs a display; arrow keys switch samples
 |---|---|
 | Frame | `setup`, `begin`, `flush`, `end`, `shutdown` |
 | Draw | `draw_rect`, `draw_textured_rect`, `draw_line`, `draw_triangle`, `draw_point`, `draw` (+ batch plurals in each group) |
-| State | `set_color`, `set_blend_mode`, `set_image`, `set_viewport`, `set_scissor`, `reset_state` |
+| State | `set_color`, `set_blend_mode`, `set_image`, `set_viewport`, `set_scissor`, `reset_state` (noun-verb aliases: `color_set`, `blend_mode_set`, `viewport_set`, … — see `aliases.odin`) |
 | Transform | `push_transform`, `pop_transform`, `translate`, `rotate`, `scale`, `get_matrix`, `set_matrix` |
+| Rect variants | `set_viewport` / `set_scissor` take `(x, y, w, h)` or a `Rect_Vec2i` |
 
 Sizing knobs (`IMAGE_MAX`, `VERTICES_MAX`, …) are `#config` — tune with `-define:IMAGE_MAX=128`.
+
+## Allocators
+
+`setup`, `shutdown`, `create_pool` / `destroy_pool`, `create_image`, and the internal `_image` / `_pipeline` / `_shader` setup/teardown/flush procs take an `allocator := context.allocator` parameter. Steady-state rendering stays allocation-free; all allocator traffic happens at setup/teardown. A destroy call must use the same allocator as its create call.
 
 ## Shaders
 

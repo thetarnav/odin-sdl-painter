@@ -145,7 +145,8 @@ _Pipeline_Context :: struct {
 _pipeline_ctx: _Pipeline_Context
 
 // Setup pipeline resources management.
-_pipeline_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) {
+@(private)
+_pipeline_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) {
 	assert(_pipeline_ctx.initialized == 0)
 	assert(gpu_device != nil)
 	assert(window != nil)
@@ -154,19 +155,21 @@ _pipeline_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) {
 	_pipeline_ctx.gpu_device = gpu_device
 	_pipeline_ctx.window = window
 
-	_pipeline_ctx.pool = create_pool(PIPELINE_MAX)
-	_pipeline_ctx.pipelines = make([]_Pipeline, PIPELINE_MAX)
+	_pipeline_ctx.pool = create_pool(PIPELINE_MAX, allocator)
+	_pipeline_ctx.pipelines = make([]_Pipeline, PIPELINE_MAX, allocator)
 }
 
 // Shutdown pipeline resources management and free resources.
-_pipeline_shutdown :: proc() {
+@(private)
+_pipeline_shutdown :: proc(allocator := context.allocator) {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 	_pipeline_ctx.initialized = 0
 
-	destroy_pool(_pipeline_ctx.pool)
-	delete(_pipeline_ctx.pipelines)
+	destroy_pool(_pipeline_ctx.pool, allocator)
+	delete(_pipeline_ctx.pipelines, allocator)
 }
 
+@(private)
 _pipeline_blend_state :: proc(blend_mode: Blend_Mode) -> sdl.GPUColorTargetBlendState {
 	blend := sdl.GPUColorTargetBlendState{}
 

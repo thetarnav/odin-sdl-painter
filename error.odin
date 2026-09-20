@@ -31,6 +31,7 @@ Error :: enum u32 {
 
 _last_error: Error = .None
 
+@(private)
 _set_error :: proc(error: Error) {
 	sdl.LogError(c.int(sdl.LogCategory.VIDEO), "SDL_gp error: %s", get_error_message(error))
 	_last_error = error
