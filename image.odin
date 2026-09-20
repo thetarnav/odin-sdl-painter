@@ -21,13 +21,11 @@ Sampler :: enum u32 {
 	Size         = 4,
 }
 
-Image :: struct {
-	id: u32,
-}
+Image :: struct {id: u32}
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
-create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> Image {
+create_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Image {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 	assert(_img_ctx.pool != nil)
 	assert(_img_ctx.images_count < IMAGE_MAX, "Increase IMAGE_MAX to create more images")
@@ -126,7 +124,7 @@ create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> I
 }
 
 // Destroy an image and free its resources.
-destroy_image :: proc(image: Image) {
+destroy_image :: proc (image: Image) {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
 	// TODO find a way to know if the image was already destroyed
@@ -150,7 +148,7 @@ destroy_image :: proc(image: Image) {
 
 // Get the GPU texture associated with an image. Returns NULL if the image is
 // invalid.
-get_image_gpu_texture :: proc(image: Image) -> ^sdl.GPUTexture {
+get_image_gpu_texture :: proc (image: Image) -> ^sdl.GPUTexture {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
 	if image.id == INVALID_ID {
@@ -162,36 +160,30 @@ get_image_gpu_texture :: proc(image: Image) -> ^sdl.GPUTexture {
 }
 
 // Get the width of an image in pixels. Returns 0 if the image is invalid.
-get_image_width :: proc(image: Image) -> i32 {
+get_image_width :: proc (image: Image) -> i32 {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
-	if image.id == INVALID_ID {
-		return 0
-	}
+	if image.id == INVALID_ID do return 0
 
 	slot := pool_id_to_slot(image.id)
 	return i32(_img_ctx.images[slot].width)
 }
 
 // Get the height of an image in pixels. Returns 0 if the image is invalid.
-get_image_height :: proc(image: Image) -> i32 {
+get_image_height :: proc (image: Image) -> i32 {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
-	if image.id == INVALID_ID {
-		return 0
-	}
+	if image.id == INVALID_ID do return 0
 
 	slot := pool_id_to_slot(image.id)
 	return i32(_img_ctx.images[slot].height)
 }
 
 // Get the size of an image in pixels as a vector. Returns {0, 0} if the image is invalid.
-get_image_size :: proc(image: Image) -> Vec2i {
+get_image_size :: proc (image: Image) -> Vec2i {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 
-	if image.id == INVALID_ID {
-		return {0, 0}
-	}
+	if image.id == INVALID_ID do return 0
 
 	slot := pool_id_to_slot(image.id)
 	return {i32(_img_ctx.images[slot].width), i32(_img_ctx.images[slot].height)}
@@ -235,7 +227,7 @@ _img_ctx: _Image_Context
 
 // Setup image resources management.
 @(private)
-_image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) -> bool {
+_image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) -> bool {
 	assert(_img_ctx.initialized == 0)
 	assert(gpu_device != nil)
 
@@ -266,7 +258,7 @@ _image_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator 
 
 // Shutdown image resources management and free resources.
 @(private)
-_image_shutdown :: proc(allocator := context.allocator) {
+_image_shutdown :: proc (allocator := context.allocator) {
 	assert(_img_ctx.initialized == _INIT_COOKIE)
 	_img_ctx.initialized = 0
 
@@ -280,7 +272,7 @@ _image_shutdown :: proc(allocator := context.allocator) {
 // Returns false if an error occurred, use GetLastError() to get more
 // information about the error.
 @(private)
-_image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.allocator) {
+_image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.allocator) {
 	if _img_ctx.pending_count == 0 {
 		return
 	}

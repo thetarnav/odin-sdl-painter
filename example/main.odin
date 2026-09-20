@@ -111,7 +111,7 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	// Acquire a command buffer for the current frame
 	cmd_buffer := sdl.AcquireGPUCommandBuffer(_context.gpu_device)
 
-	gp.begin(WINDOW_WIDTH, WINDOW_HEIGHT)
+	gp.begin({WINDOW_WIDTH, WINDOW_HEIGHT})
 
 	{
 		gp.set_color({0, 0, 0, 255})

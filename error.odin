@@ -31,20 +31,20 @@ Error :: enum u32 {
 _last_error: Error = .None
 
 @(private)
-_set_error :: proc(error: Error) {
+_set_error :: proc (error: Error) {
 	log.errorf("SDL_gp error: %s", get_error_message(error))
 	_last_error = error
 }
 
 // Get the last error that occurred in SDL_gp. Returns ERROR_NONE if no
 // error has occurred.
-get_last_error :: proc() -> Error {
+get_last_error :: proc () -> Error {
 	return _last_error
 }
 
 // Get a human-readable string describing an Error value. Returns
 // "Unknown error" if the error value is not recognized.
-get_error_message :: proc(error: Error) -> string {
+get_error_message :: proc (error: Error) -> string {
 	switch error {
 	case .None:                             return "No error"
 	case .Setup_Image_Failed:               return "Failed to setup image resources"

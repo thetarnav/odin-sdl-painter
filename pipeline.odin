@@ -24,13 +24,11 @@ Primitive_Type :: enum u32 {
 	Size           = 5,
 }
 
-Pipeline :: struct {
-	id: u32,
-}
+Pipeline :: struct {id: u32}
 
 // Create a graphics pipeline, Returns an invalid pipeline if creation failed,
 // Use GetLastError() to get more information about the error.
-create_pipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> Pipeline {
+create_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> Pipeline {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 
 	// Location 0 packs position.xy + texcoord as one FLOAT4 ("coord" in
@@ -87,20 +85,16 @@ create_pipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primit
 		return Pipeline{INVALID_ID}
 	}
 
-	_pipeline_ctx.pipelines[slot] = _Pipeline{
-		pipeline = pipeline,
-	}
+	_pipeline_ctx.pipelines[slot] = {pipeline}
 
 	return Pipeline{id = generate_pool_id(_pipeline_ctx.pool, slot)}
 }
 
 // Destroy a graphics pipeline and free its resources.
-destroy_pipeline :: proc(pipeline: Pipeline) {
+destroy_pipeline :: proc (pipeline: Pipeline) {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 
-	if pipeline.id == INVALID_ID {
-		return
-	}
+	if pipeline.id == INVALID_ID do return
 
 	slot := pool_id_to_slot(pipeline.id)
 
@@ -109,19 +103,15 @@ destroy_pipeline :: proc(pipeline: Pipeline) {
 
 	release_pool_slot(_pipeline_ctx.pool, slot)
 
-	_pipeline_ctx.pipelines[slot] = _Pipeline{
-		pipeline = nil,
-	}
+	_pipeline_ctx.pipelines[slot] = {}
 }
 
 // Get the GPU graphics pipeline associated with a SDL_gp pipeline. Returns
 // NULL if the pipeline is invalid.
-get_gpu_pipeline :: proc(pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
+get_gpu_pipeline :: proc (pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 
-	if pipeline.id == INVALID_ID {
-		return nil
-	}
+	if pipeline.id == INVALID_ID do return nil
 
 	slot := pool_id_to_slot(pipeline.id)
 	return _pipeline_ctx.pipelines[slot].pipeline
@@ -146,7 +136,7 @@ _pipeline_ctx: _Pipeline_Context
 
 // Setup pipeline resources management.
 @(private)
-_pipeline_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) {
+_pipeline_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) {
 	assert(_pipeline_ctx.initialized == 0)
 	assert(gpu_device != nil)
 	assert(window != nil)
@@ -161,7 +151,7 @@ _pipeline_setup :: proc(gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocat
 
 // Shutdown pipeline resources management and free resources.
 @(private)
-_pipeline_shutdown :: proc(allocator := context.allocator) {
+_pipeline_shutdown :: proc (allocator := context.allocator) {
 	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
 	_pipeline_ctx.initialized = 0
 
@@ -170,7 +160,7 @@ _pipeline_shutdown :: proc(allocator := context.allocator) {
 }
 
 @(private)
-_pipeline_blend_state :: proc(blend_mode: Blend_Mode) -> sdl.GPUColorTargetBlendState {
+_pipeline_blend_state :: proc (blend_mode: Blend_Mode) -> sdl.GPUColorTargetBlendState {
 	blend := sdl.GPUColorTargetBlendState{}
 
 	switch blend_mode {

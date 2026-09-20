@@ -27,10 +27,6 @@ Recti :: struct {
 Mat  :: matrix[2, 3]f32
 Mat3 :: matrix[3, 3]f32
 
-// Canonical 2x3 affine identity. NOTE: do NOT use the scalar constructor
-// Mat(1) here — the Odin LLVM backend asserts row==column for scalar
-// matrix construction and crashes on this non-square (2x3) type.
-// The explicit literal below is the only supported identity form.
 MAT_IDENTITY :: Mat{1, 0, 0, 0, 1, 0}
 
 #assert(size_of(Mat) == 24, "Mat must stay 6 floats (2x3)")
@@ -39,27 +35,27 @@ MAT_IDENTITY :: Mat{1, 0, 0, 0, 1, 0}
 #assert(size_of(Recti) == 16, "Recti layout changed")
 
 // Lift an affine 2x3 matrix to homogeneous 3x3 (bottom row 0, 0, 1).
-to_mat3 :: proc(m: Mat) -> Mat3 {
+to_mat3 :: proc (m: Mat) -> Mat3 {
 	return Mat3{m[0, 0], m[0, 1], m[0, 2], m[1, 0], m[1, 1], m[1, 2], 0, 0, 1}
 }
 
 // Project a homogeneous 3x3 matrix back to affine 2x3 (drops bottom row).
-from_mat3 :: proc(m: Mat3) -> Mat {
+from_mat3 :: proc (m: Mat3) -> Mat {
 	return Mat{m[0, 0], m[0, 1], m[0, 2], m[1, 0], m[1, 1], m[1, 2]}
 }
 
 // Compose affine transforms: result applies b first, then a.
 // Replaces _mul_projection_transform.
-compose :: proc(a, b: Mat) -> Mat {
+compose :: proc (a, b: Mat) -> Mat {
 	return from_mat3(to_mat3(a) * to_mat3(b))
 }
 
 // Apply an affine transform to a point. Replaces _mat3_mul_vec2.
-transform_point :: proc(m: Mat, p: Vec2) -> Vec2 {
+transform_point :: proc (m: Mat, p: Vec2) -> Vec2 {
 	return m * [3]f32{p.x, p.y, 1}
 }
 
 // Convert an integer rect to a float rect (draw-group boundary helper).
-rect_to_float :: proc(r: Recti) -> Rect {
+rect_to_float :: proc (r: Recti) -> Rect {
 	return {Vec2(r.pos), Vec2(r.size)}
 }

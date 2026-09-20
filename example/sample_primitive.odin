@@ -59,8 +59,8 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 			gp.set_color({255, 0, 255, 255})
 
 			gp.draw_triangle(gp.Triangle{
-				a = {          0, -half_shape},
-				b = { half_shape,  half_shape},
+				a = {         0, -half_shape},
+				b = {half_shape,  half_shape},
 				c = {-half_shape,  half_shape},
 			})
 		}
@@ -83,10 +83,10 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 			}
 
 			positions := [4]gp.Vec2{
-				{          0, -half_shape},
-				{ half_shape,  half_shape},
+				{         0, -half_shape},
+				{half_shape,  half_shape},
 				{-half_shape,  half_shape},
-				{          0,           0},
+				{         0,           0},
 			}
 
 			vertex_buffer: [3]gp.Vertex

@@ -24,7 +24,7 @@ Pool :: struct {
 
 // Create a pool with the specified number of slots (not counting the invalid
 // slot).
-create_pool :: proc(number_of_slots: int, allocator := context.allocator) -> ^Pool {
+create_pool :: proc (number_of_slots: int, allocator := context.allocator) -> ^Pool {
 	pool := new(Pool, allocator)
 
 	// +1 since slot 0 is reserved for invalid slot
@@ -44,7 +44,7 @@ create_pool :: proc(number_of_slots: int, allocator := context.allocator) -> ^Po
 
 // Destroy a pool and free its resources. The allocator must match the one
 // used in create_pool.
-destroy_pool :: proc(pool: ^Pool, allocator := context.allocator) {
+destroy_pool :: proc (pool: ^Pool, allocator := context.allocator) {
 	free(pool.counters, allocator)
 	free(pool.free_stack, allocator)
 	free(pool, allocator)
@@ -52,7 +52,7 @@ destroy_pool :: proc(pool: ^Pool, allocator := context.allocator) {
 
 // Acquire a slot from the pool and return its index. Returns
 // POOL_INVALID_SLOT if no more slots are available.
-acquire_pool_slot :: proc(pool: ^Pool) -> i32 {
+acquire_pool_slot :: proc (pool: ^Pool) -> i32 {
 	assert(pool != nil)
 	assert(pool.free_stack != nil)
 
@@ -66,7 +66,7 @@ acquire_pool_slot :: proc(pool: ^Pool) -> i32 {
 
 // Release a slot back to the pool, making it available for future
 // acquisitions.
-release_pool_slot :: proc(pool: ^Pool, slot: i32) {
+release_pool_slot :: proc (pool: ^Pool, slot: i32) {
 	assert(slot > POOL_INVALID_SLOT && int(slot) < int(pool.size))
 	assert(pool != nil)
 	assert(pool.free_stack != nil)
@@ -80,7 +80,7 @@ release_pool_slot :: proc(pool: ^Pool, slot: i32) {
 
 // Generate a unique id for a slot in the pool using its index and generation
 // counter.
-generate_pool_id :: proc(pool: ^Pool, slot: i32) -> u32 {
+generate_pool_id :: proc (pool: ^Pool, slot: i32) -> u32 {
 	assert(pool != nil)
 	assert(slot > POOL_INVALID_SLOT && int(slot) < int(pool.size))
 	assert(pool.counters != nil)
@@ -94,7 +94,7 @@ generate_pool_id :: proc(pool: ^Pool, slot: i32) -> u32 {
 }
 
 // Extract the slot index from a generated id.
-pool_id_to_slot :: proc(id: u32) -> i32 {
+pool_id_to_slot :: proc (id: u32) -> i32 {
 	slot := i32(id & POOL_SLOT_MASK)
 	return slot
 }
