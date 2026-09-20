@@ -6,7 +6,7 @@ import "base:runtime"
 import sdl "vendor:sdl3"
 import hm "core:container/handle_map"
 
-Shader :: struct {id: u32}
+Shader :: distinct hm.Handle32
 
 // Create a shader from vertex and fragment shader descriptions. Returns an
 // invalid shader if creation failed, Use GetLastError() to get more
@@ -19,17 +19,17 @@ make_shader :: proc (desc: sdl.GPUShaderCreateInfo) -> Shader {
 
 	if sdl_shader == nil {
 		_set_error(.Create_Shader_Failed)
-		return Shader{INVALID_ID}
+		return {}
 	}
 
 	handle, ok := hm.add(&_shader_ctx.shaders, _Shader{shader = sdl_shader})
 	if !ok {
 		sdl.ReleaseGPUShader(_shader_ctx.gpu_device, sdl_shader)
 		_set_error(.Create_Shader_Failed)
-		return Shader{INVALID_ID}
+		return {}
 	}
 
-	return Shader{id = _id_from_handle(handle)}
+	return handle
 }
 
 // Get the SDL shader associated with a SDL_gp shader. Returns NULL if the
@@ -37,10 +37,9 @@ make_shader :: proc (desc: sdl.GPUShaderCreateInfo) -> Shader {
 get_gpu_shader :: proc (shader: Shader) -> ^sdl.GPUShader {
 	assert(_shader_ctx.initialized)
 
-	if shader.id == INVALID_ID do return nil
-
-	rec, ok := hm.get(&_shader_ctx.shaders, _handle_from_id(shader.id))
+	rec, ok := hm.get(&_shader_ctx.shaders, shader)
 	if !ok do return nil
+
 	return rec.shader
 }
 
@@ -48,15 +47,11 @@ get_gpu_shader :: proc (shader: Shader) -> ^sdl.GPUShader {
 destroy_shader :: proc (shader: Shader) {
 	assert(_shader_ctx.initialized)
 
-	if shader.id == INVALID_ID do return
-
-	handle := _handle_from_id(shader.id)
-
-	rec, ok := hm.get(&_shader_ctx.shaders, handle)
+	rec, ok := hm.get(&_shader_ctx.shaders, shader)
 	if !ok do return // stale or foreign id: safe no-op
 
 	sdl.ReleaseGPUShader(_shader_ctx.gpu_device, rec.shader)
-	hm.remove(&_shader_ctx.shaders, handle)
+	hm.remove(&_shader_ctx.shaders, shader)
 }
 
 // Shader (Private)
@@ -73,13 +68,13 @@ _frag_msl  := #load("./shaders/painter.frag.msl",  []byte)
 _frag_dxil := #load("./shaders/painter.frag.dxil", []byte)
 
 _Shader :: struct {
-	handle: hm.Handle32,
+	handle: Shader,
 	shader: ^sdl.GPUShader,
 }
 
 _Shader_Context :: struct {
 	initialized: bool,
-	shaders:     hm.Static_Handle_Map(SHADER_MAX, _Shader, hm.Handle32),
+	shaders:     hm.Static_Handle_Map(SHADER_MAX, _Shader, Shader),
 	gpu_device:  ^sdl.GPUDevice,
 }
 
@@ -152,7 +147,7 @@ _create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Alloc
 		format     = format,
 	})
 
-	if vert.id == INVALID_ID {
+	if vert == {} {
 		shutdown(allocator)
 		return {}, {}, false
 	}
@@ -166,7 +161,7 @@ _create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Alloc
 		num_samplers = TEXTURE_SLOTS_MAX,
 	})
 
-	if frag.id == INVALID_ID {
+	if frag == {} {
 		shutdown(allocator)
 		return {}, {}, false
 	}

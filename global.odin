@@ -1,7 +1,5 @@
 package sdl_painter
 
-import hm "core:container/handle_map"
-
 // ----------------------------------------------------------------------------
 // Global Definitions and Utilities
 // ----------------------------------------------------------------------------
@@ -24,11 +22,3 @@ COMMANDS_MAX       :: #config(COMMANDS_MAX, 16384)
 MOVE_VERTICES_MAX  :: #config(MOVE_VERTICES_MAX, 96)
 
 TEXTURE_SLOTS_MAX :: 4
-
-INVALID_ID    :: 0
-IMPOSSIBLE_ID :: 0xFFFFFFFF
-
-// Handle32 packs into exactly 32 bits, so public resource ids stay u32.
-// The zero handle transmutes to 0 == INVALID_ID, index 0 is map sentinel.
-_handle_from_id :: proc (id: u32) -> hm.Handle32 { return transmute(hm.Handle32)id }
-_id_from_handle :: proc (h: hm.Handle32) -> u32 { return transmute(u32)h }

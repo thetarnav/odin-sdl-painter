@@ -24,7 +24,7 @@ Sampler :: enum u32 {
 
 #assert(len(Sampler) == 4, "Sampler must stay four entries")
 
-Image :: struct {id: u32}
+Image :: distinct hm.Handle32
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
@@ -51,7 +51,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 
 		if inner_surface == nil {
 			_set_error(.Create_Image_Failed)
-			return Image{INVALID_ID}
+			return {}
 		}
 
 		converted = true
@@ -75,7 +75,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 
 	if texture == nil {
 		_set_error(.Create_Image_Failed)
-		return Image{INVALID_ID}
+		return {}
 	}
 
 	// Insert image record into the map; exhaustion keeps the sticky-error contract.
@@ -88,7 +88,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 	if !ok {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 		_set_error(.Create_Image_Failed)
-		return Image{INVALID_ID}
+		return {}
 	}
 
 	// Create a pending image to be flushed later
@@ -102,7 +102,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 		hm.remove(&_img_ctx.images, handle)
 		_set_error(.Create_Image_Failed)
-		return Image{INVALID_ID}
+		return {}
 	}
 	mem.copy(pixels_copy, inner_surface.pixels, int(size))
 
@@ -117,24 +117,18 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 
 	// Destroy the converted surface if we created one
 
-	return Image{id = _id_from_handle(handle)}
+	return handle
 }
 
 // Destroy an image and free its resources.
 destroy_image :: proc (image: Image) {
 	assert(_img_ctx.initialized)
 
-	if image.id == INVALID_ID {
-		return
-	}
-
-	handle := _handle_from_id(image.id)
-
-	rec, ok := hm.get(&_img_ctx.images, handle)
+	rec, ok := hm.get(&_img_ctx.images, image)
 	if !ok do return // already destroyed or foreign id: safe no-op
 
 	sdl.ReleaseGPUTexture(_img_ctx.gpu_device, rec.texture)
-	hm.remove(&_img_ctx.images, handle)
+	hm.remove(&_img_ctx.images, image)
 }
 
 // Get the GPU texture associated with an image. Returns NULL if the image is
@@ -142,46 +136,32 @@ destroy_image :: proc (image: Image) {
 get_image_gpu_texture :: proc (image: Image) -> ^sdl.GPUTexture {
 	assert(_img_ctx.initialized)
 
-	if image.id == INVALID_ID {
-		return nil
-	}
-
-	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
-	if !ok do return nil
-	return rec.texture
+	rec, ok := hm.get(&_img_ctx.images, image)
+	return rec.texture if ok else nil
 }
 
 // Get the width of an image in pixels. Returns 0 if the image is invalid.
 get_image_width :: proc (image: Image) -> i32 {
 	assert(_img_ctx.initialized)
 
-	if image.id == INVALID_ID do return 0
-
-	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
-	if !ok do return 0
-	return i32(rec.width)
+	rec, ok := hm.get(&_img_ctx.images, image)
+	return i32(rec.width) if ok else 0
 }
 
 // Get the height of an image in pixels. Returns 0 if the image is invalid.
 get_image_height :: proc (image: Image) -> i32 {
 	assert(_img_ctx.initialized)
 
-	if image.id == INVALID_ID do return 0
-
-	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
-	if !ok do return 0
-	return i32(rec.height)
+	rec, ok := hm.get(&_img_ctx.images, image)
+	return i32(rec.height) if ok else 0
 }
 
 // Get the size of an image in pixels as a vector. Returns {0, 0} if the image is invalid.
 get_image_size :: proc (image: Image) -> Vec2i {
 	assert(_img_ctx.initialized)
 
-	if image.id == INVALID_ID do return 0
-
-	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
-	if !ok do return 0
-	return {i32(rec.width), i32(rec.height)}
+	rec, ok := hm.get(&_img_ctx.images, image)
+	return {i32(rec.width), i32(rec.height)} if ok else 0
 }
 
 // Discoverability alias for the size query; canonical form is get_image_size.
@@ -191,7 +171,7 @@ image_size :: get_image_size
 // ----------------------------------------------------------------------------
 
 _Image :: struct {
-	handle:  hm.Handle32, // required by Static_Handle_Map; overwritten by hm.add
+	handle:  Image,
 	texture: ^sdl.GPUTexture,
 	width:   u32,
 	height:  u32,
@@ -201,13 +181,13 @@ _Image_Pending :: struct {
 	pixels: rawptr,
 	width:  u32,
 	height: u32,
-	handle: hm.Handle32, // map handle, resolved via hm.get at flush time
+	handle: Image,
 	bpp:    u8,
 }
 
 _Image_Context :: struct {
 	initialized:                 bool,
-	images:                      hm.Static_Handle_Map(IMAGE_MAX + 1, _Image, hm.Handle32), // +1 white slot
+	images:                      hm.Static_Handle_Map(IMAGE_MAX + 1, _Image, Image), // +1 white slot
 	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
 	texture_transfer_buffer:     ^sdl.GPUTransferBuffer,

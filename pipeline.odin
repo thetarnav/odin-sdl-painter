@@ -23,7 +23,7 @@ Primitive_Type :: enum u32 {
 	Points,
 }
 
-Pipeline :: struct {id: u32}
+Pipeline :: distinct hm.Handle32
 
 // Create a graphics pipeline, Returns an invalid pipeline if creation failed,
 // Use GetLastError() to get more information about the error.
@@ -75,32 +75,28 @@ make_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primiti
 
 	if pipeline == nil {
 		_set_error(.Create_Pipeline_Failed)
-		return Pipeline{INVALID_ID}
+		return {}
 	}
 
 	handle, ok := hm.add(&_pipeline_ctx.pipelines, _Pipeline{pipeline = pipeline})
 	if !ok {
 		sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, pipeline)
 		_set_error(.Create_Pipeline_Failed)
-		return Pipeline{INVALID_ID}
+		return {}
 	}
 
-	return Pipeline{id = _id_from_handle(handle)}
+	return handle
 }
 
 // Destroy a graphics pipeline and free its resources.
 destroy_pipeline :: proc (pipeline: Pipeline) {
 	assert(_pipeline_ctx.initialized)
 
-	if pipeline.id == INVALID_ID do return
-
-	handle := _handle_from_id(pipeline.id)
-
-	rec, ok := hm.get(&_pipeline_ctx.pipelines, handle)
+	rec, ok := hm.get(&_pipeline_ctx.pipelines, pipeline)
 	if !ok do return // stale or foreign id: safe no-op, never aliases a live pipeline
 
 	sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, rec.pipeline)
-	hm.remove(&_pipeline_ctx.pipelines, handle)
+	hm.remove(&_pipeline_ctx.pipelines, pipeline)
 }
 
 // Get the GPU graphics pipeline associated with a SDL_gp pipeline. Returns
@@ -108,10 +104,9 @@ destroy_pipeline :: proc (pipeline: Pipeline) {
 get_gpu_pipeline :: proc (pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
 	assert(_pipeline_ctx.initialized)
 
-	if pipeline.id == INVALID_ID do return nil
-
-	rec, ok := hm.get(&_pipeline_ctx.pipelines, _handle_from_id(pipeline.id))
+	rec, ok := hm.get(&_pipeline_ctx.pipelines, pipeline)
 	if !ok do return nil
+
 	return rec.pipeline
 }
 
@@ -119,13 +114,13 @@ get_gpu_pipeline :: proc (pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
 // ----------------------------------------------------------------------------
 
 _Pipeline :: struct {
-	handle:   hm.Handle32,
+	handle:   Pipeline,
 	pipeline: ^sdl.GPUGraphicsPipeline,
 }
 
 _Pipeline_Context :: struct {
 	initialized: bool,
-	pipelines:   hm.Static_Handle_Map(PIPELINE_MAX, _Pipeline, hm.Handle32),
+	pipelines:   hm.Static_Handle_Map(PIPELINE_MAX, _Pipeline, Pipeline),
 	gpu_device:  ^sdl.GPUDevice,
 	window:      ^sdl.Window,
 }

@@ -130,10 +130,11 @@ _pipeline_index :: proc (primitive_type: Primitive_Type, blend_mode: Blend_Mode)
 
 @(private)
 _find_or_create_pipeline :: proc (primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> Pipeline {
+
 	index := _pipeline_index(primitive_type, blend_mode)
 	pipeline := _gp.pipelines[index]
 
-	if pipeline.id == INVALID_ID {
+	if pipeline == {} {
 		pipeline = make_pipeline(_gp.shader_vert, _gp.shader_frag, primitive_type, blend_mode)
 		_gp.pipelines[index] = pipeline
 	}
@@ -187,7 +188,7 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 	defer sdl.DestroySurface(white_surface)
 
 	_gp.white_image = make_image(white_surface)
-	if _gp.white_image.id == INVALID_ID {
+	if _gp.white_image == {} {
 		shutdown()
 		return false
 	}
@@ -244,14 +245,14 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 	// Create common pipelines
 
 	is_ok := true
-	is_ok &= _find_or_create_pipeline(.Points,     .None).id  != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Points,     .Blend).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Lines,      .None).id  != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Lines,      .Blend).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Line_Strip, .None).id  != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Line_Strip, .Blend).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Triangles,  .None).id  != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Triangles,  .Blend).id != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Points,     .None)  != {}
+	is_ok &= _find_or_create_pipeline(.Points,     .Blend) != {}
+	is_ok &= _find_or_create_pipeline(.Lines,      .None)  != {}
+	is_ok &= _find_or_create_pipeline(.Lines,      .Blend) != {}
+	is_ok &= _find_or_create_pipeline(.Line_Strip, .None)  != {}
+	is_ok &= _find_or_create_pipeline(.Line_Strip, .Blend) != {}
+	is_ok &= _find_or_create_pipeline(.Triangles,  .None)  != {}
+	is_ok &= _find_or_create_pipeline(.Triangles,  .Blend) != {}
 
 	if !is_ok {
 		_set_error(.Create_Common_Pipeline_Failed)
@@ -271,50 +272,44 @@ shutdown :: proc (allocator := context.allocator) {
 	// Destroy common pipelines
 
 	for i in 0 ..< len(_gp.pipelines) {
-		if _gp.pipelines[i].id != INVALID_ID {
+		if _gp.pipelines[i] != {} {
 			destroy_pipeline(_gp.pipelines[i])
-			_gp.pipelines[i] = {INVALID_ID}
+			_gp.pipelines[i] = {}
 		}
 	}
 
 	// Destroy common shader
 
-	if _gp.shader_vert.id != INVALID_ID {
+	if _gp.shader_vert != {} {
 		destroy_shader(_gp.shader_vert)
-		_gp.shader_vert = {INVALID_ID}
 	}
 
-	if _gp.shader_frag.id != INVALID_ID {
+	if _gp.shader_frag != {} {
 		destroy_shader(_gp.shader_frag)
-		_gp.shader_frag = {INVALID_ID}
 	}
 
 	// Destroy nearest sampler
 
 	if _gp.nearest_samplers != nil {
 		sdl.ReleaseGPUSampler(_gp.desc.gpu_device, _gp.nearest_samplers)
-		_gp.nearest_samplers = nil
 	}
 
 	// Destroy vertex data buffer
 
 	if _gp.vertex_data_buffer != nil {
 		sdl.ReleaseGPUBuffer(_gp.desc.gpu_device, _gp.vertex_data_buffer)
-		_gp.vertex_data_buffer = nil
 	}
 
 	// Destroy vertex transfer buffer
 
 	if _gp.vertex_transfer_buffer != nil {
 		sdl.ReleaseGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer)
-		_gp.vertex_transfer_buffer = nil
 	}
 
 	// Destroy white texture
 
-	if _gp.white_image.id != INVALID_ID {
+	if _gp.white_image != {} {
 		destroy_image(_gp.white_image)
-		_gp.white_image = {INVALID_ID}
 	}
 
 	// Shutdown resources management for shaders, pipelines and images
@@ -445,11 +440,11 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 	render_pass := sdl.BeginGPURenderPass(cmd_buffer, &color_target_info, 1, nil)
 
-	cur_pipeline_id: u32 = IMPOSSIBLE_ID
-	cur_uniform_index: u32 = IMPOSSIBLE_ID
-	cur_image_ids: [TEXTURE_SLOTS_MAX]u32
+	cur_pipeline_id   := transmute(Pipeline)max(u32)
+	cur_uniform_index := max(u32)
+	cur_image_ids: [TEXTURE_SLOTS_MAX]Image
 	for i in 0 ..< TEXTURE_SLOTS_MAX {
-		cur_image_ids[i] = IMPOSSIBLE_ID
+		cur_image_ids[i] = transmute(Image)max(u32)
 	}
 
 	// Flush commands
@@ -467,8 +462,8 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 			rebind_uniforms, rebind_texture: bool
 
 			// Check if pipeline needs to be changed
-			if draw.pipeline.id != cur_pipeline_id {
-				cur_pipeline_id = draw.pipeline.id
+			if draw.pipeline != cur_pipeline_id {
+				cur_pipeline_id = draw.pipeline
 
 				// Bind pipeline
 				sdl.BindGPUGraphicsPipeline(render_pass, get_gpu_pipeline(draw.pipeline))
@@ -488,10 +483,10 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 			image_bindings: [TEXTURE_SLOTS_MAX]sdl.GPUTextureSamplerBinding
 
 			for j in 0 ..< u32(TEXTURE_SLOTS_MAX) {
-				image_id: u32
+				image_id: Image
 
 				if j < draw.texture.count {
-					image_id = draw.texture.images[j].id
+					image_id = draw.texture.images[j]
 				}
 
 				if image_id != cur_image_ids[j] {
@@ -499,7 +494,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 					rebind_texture = true
 				}
 
-				if image_id != INVALID_ID {
+				if image_id != {} {
 					image_bindings[j] = sdl.GPUTextureSamplerBinding{
 						texture = get_image_gpu_texture(draw.texture.images[j]),
 						sampler = draw.texture.samplers[j],
@@ -518,7 +513,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 			}
 
 			// Rebind uniforms if needed
-			if rebind_uniforms && cur_uniform_index != IMPOSSIBLE_ID {
+			if rebind_uniforms && cur_uniform_index != max(u32) {
 				uniform := &_gp.uniforms[draw.uniform_index]
 
 				if uniform.vs_size > 0 {
@@ -667,7 +662,7 @@ _merge_draw_commands :: proc (
 		if !uniform_match {
 			uniform_match = mem.compare(mem.any_to_bytes(uniform^), mem.any_to_bytes(_gp.uniforms[cmd.args.draw.uniform_index])) == 0
 		}
-		if cmd.args.draw.pipeline.id == pipeline.id &&
+		if cmd.args.draw.pipeline == pipeline &&
 		   mem.compare(texture_bytes, cmd_texture_bytes) == 0 &&
 		   uniform_match {
 			prev_cmd = cmd // Found a command to merge with, stop looking
@@ -797,7 +792,7 @@ _merge_draw_commands :: proc (
 _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vertices_count: u32, primitive_type: Primitive_Type) {
 	pipeline := pipeline
 	uniform: ^Uniform = nil
-	if _gp.state.pipeline.id != INVALID_ID {
+	if _gp.state.pipeline != {} {
 		pipeline = _gp.state.pipeline
 		uniform = &_gp.state.uniform
 	}
@@ -816,7 +811,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vert
 	}
 
 	// Try to reuse previous uniform if possible
-	uniform_index := u32(IMPOSSIBLE_ID)
+	uniform_index := max(u32)
 	if uniform != nil {
 		prev_uniform := _prev_uniform()
 
@@ -1052,7 +1047,7 @@ set_pipeline :: proc (pipeline: Pipeline) {
 reset_pipeline :: proc () {
 	assert(_gp.initialized)
 
-	set_pipeline({INVALID_ID})
+	set_pipeline({})
 }
 
 pipeline_set   :: set_pipeline
@@ -1061,7 +1056,7 @@ pipeline_reset :: reset_pipeline
 // Set uniform data for the current pipeline.
 set_uniform :: proc (vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i32) {
 	assert(_gp.initialized)
-	assert(_gp.state.pipeline.id != INVALID_ID)
+	assert(_gp.state.pipeline != {})
 
 	size := int(vs_size) + int(fs_size)
 
@@ -1090,7 +1085,7 @@ set_uniform :: proc (vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i3
 // Reset uniform data to the default state (current state color).
 reset_uniform :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.state.pipeline.id != INVALID_ID)
+	assert(_gp.state.pipeline != {})
 
 	set_uniform(nil, 0, nil, 0)
 }
@@ -1152,7 +1147,7 @@ set_image :: proc (channel: i32, image: Image) {
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	ch := int(channel)
-	if _gp.state.texture.images[ch].id == image.id {
+	if _gp.state.texture.images[ch] == image {
 		return
 	}
 
@@ -1161,7 +1156,7 @@ set_image :: proc (channel: i32, image: Image) {
 	// Recalculate texture count
 	texture_count := int(_gp.state.texture.count)
 	for i := max(ch, texture_count - 1); i >= 0; i -= 1 {
-		if _gp.state.texture.images[i].id != INVALID_ID {
+		if _gp.state.texture.images[i] != {} {
 			texture_count = i + 1
 			break
 		}
@@ -1189,7 +1184,7 @@ unset_image :: proc (channel: i32) {
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	set_image(channel, {INVALID_ID})
+	set_image(channel, {})
 }
 
 // Set current bound sampler in a texture channel.
