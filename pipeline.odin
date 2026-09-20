@@ -5,13 +5,13 @@ package sdl_painter
 import sdl "vendor:sdl3"
 
 Blend_Mode :: enum u32 {
-	None                = 0,
-	Blend               = 1,
-	Add                 = 2,
-	Mod                 = 3,
-	Mul                 = 4,
-	Blend_Premultiplied = 5,
-	Add_Premultiplied   = 6,
+	None,
+	Blend,
+	Add,
+	Mod,
+	Mul,
+	Blend_Premultiplied,
+	Add_Premultiplied,
 }
 
 Primitive_Type :: enum u32 {
@@ -39,7 +39,7 @@ make_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primiti
 	}}
 
 	vertex_attributes := [2]sdl.GPUVertexAttribute{
-		{location = 0, buffer_slot = 0, format = .FLOAT4, offset = u32(offset_of(Vertex, position))},
+		{location = 0, buffer_slot = 0, format = .FLOAT4,      offset = u32(offset_of(Vertex, position))},
 		{location = 1, buffer_slot = 0, format = .UBYTE4_NORM, offset = u32(offset_of(Vertex, color))},
 	}
 
@@ -50,7 +50,7 @@ make_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primiti
 		num_vertex_attributes      = 2,
 	}
 
-	blend_state := _pipeline_blend_state(blend_mode)
+	blend_state := BLEND_STATE[blend_mode]
 
 	color_target_descriptions := [1]sdl.GPUColorTargetDescription{{
 		format      = sdl.GetGPUSwapchainTextureFormat(_pipeline_ctx.gpu_device, _pipeline_ctx.window),
@@ -158,68 +158,61 @@ _pipeline_shutdown :: proc (allocator := context.allocator) {
 	_pipeline_ctx = {}
 }
 
-@(private)
-_pipeline_blend_state :: proc (blend_mode: Blend_Mode) -> sdl.GPUColorTargetBlendState {
-	blend := sdl.GPUColorTargetBlendState{}
-
-	switch blend_mode {
-	case .Blend:
-		blend.enable_blend          = true
-		blend.src_color_blendfactor = .SRC_ALPHA
-		blend.dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .ONE
-		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
-		blend.alpha_blend_op        = .ADD
-	case .Blend_Premultiplied:
-		blend.enable_blend          = true
-		blend.src_color_blendfactor = .ONE
-		blend.dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .ONE
-		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
-		blend.alpha_blend_op        = .ADD
-	case .Add:
-		blend.enable_blend          = true
-		blend.src_color_blendfactor = .SRC_ALPHA
-		blend.dst_color_blendfactor = .ONE
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .ZERO
-		blend.dst_alpha_blendfactor = .ONE
-		blend.alpha_blend_op        = .ADD
-	case .Add_Premultiplied:
-		blend.enable_blend          = true
-		blend.src_color_blendfactor = .ONE
-		blend.dst_color_blendfactor = .ONE
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .ZERO
-		blend.dst_alpha_blendfactor = .ONE
-		blend.alpha_blend_op        = .ADD
-	case .Mod:
-		blend.enable_blend          = true
-		blend.src_color_blendfactor = .DST_COLOR
-		blend.dst_color_blendfactor = .ZERO
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .ZERO
-		blend.dst_alpha_blendfactor = .ONE
-		blend.alpha_blend_op        = .ADD
-	case .Mul:
-		blend.enable_blend          = true
-		blend.src_color_blendfactor = .DST_COLOR
-		blend.dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .DST_ALPHA
-		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
-		blend.alpha_blend_op        = .ADD
-	case .None: // default in C covers NONE and any other value
-		blend.enable_blend          = false
-		blend.src_color_blendfactor = .ONE
-		blend.dst_color_blendfactor = .ZERO
-		blend.color_blend_op        = .ADD
-		blend.src_alpha_blendfactor = .ONE
-		blend.dst_alpha_blendfactor = .ZERO
-		blend.alpha_blend_op        = .ADD
-	}
-
-	return blend
+@(private, rodata)
+BLEND_STATE := [Blend_Mode]sdl.GPUColorTargetBlendState{
+	.None = {},
+	.Blend = {
+		enable_blend          = true,
+		src_color_blendfactor = .SRC_ALPHA,
+		dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA,
+		color_blend_op        = .ADD,
+		src_alpha_blendfactor = .ONE,
+		dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA,
+		alpha_blend_op        = .ADD,
+	},
+	.Blend_Premultiplied = {
+		enable_blend          = true,
+		src_color_blendfactor = .ONE,
+		dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA,
+		color_blend_op        = .ADD,
+		src_alpha_blendfactor = .ONE,
+		dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA,
+		alpha_blend_op        = .ADD,
+	},
+	.Add = {
+		enable_blend          = true,
+		src_color_blendfactor = .SRC_ALPHA,
+		dst_color_blendfactor = .ONE,
+		color_blend_op        = .ADD,
+		src_alpha_blendfactor = .ZERO,
+		dst_alpha_blendfactor = .ONE,
+		alpha_blend_op        = .ADD,
+	},
+	.Add_Premultiplied = {
+		enable_blend          = true,
+		src_color_blendfactor = .ONE,
+		dst_color_blendfactor = .ONE,
+		color_blend_op        = .ADD,
+		src_alpha_blendfactor = .ZERO,
+		dst_alpha_blendfactor = .ONE,
+		alpha_blend_op        = .ADD,
+	},
+	.Mod = {
+		enable_blend          = true,
+		src_color_blendfactor = .DST_COLOR,
+		dst_color_blendfactor = .ZERO,
+		color_blend_op        = .ADD,
+		src_alpha_blendfactor = .ZERO,
+		dst_alpha_blendfactor = .ONE,
+		alpha_blend_op        = .ADD,
+	},
+	.Mul = {
+		enable_blend          = true,
+		src_color_blendfactor = .DST_COLOR,
+		dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA,
+		color_blend_op        = .ADD,
+		src_alpha_blendfactor = .DST_ALPHA,
+		dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA,
+		alpha_blend_op        = .ADD,
+	},
 }
