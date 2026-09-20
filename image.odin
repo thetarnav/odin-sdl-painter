@@ -10,6 +10,7 @@
 package sdl_painter
 
 import sdl "vendor:sdl3"
+import "base:builtin"
 import "core:log"
 import "core:mem"
 
@@ -352,5 +353,5 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 	sdl.EndGPUCopyPass(copy_pass)
 	sdl.UnmapGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
 
-	resize(&_img_ctx.pending, 0)
+	builtin.clear(&_img_ctx.pending)
 }
