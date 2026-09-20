@@ -108,14 +108,14 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 	}
 	mem.copy(pixels_copy, inner_surface.pixels, int(size))
 
-	_img_ctx.pending[_img_ctx.pending_count] = _Image_Pending{
+	assert(len(_img_ctx.pending) < cap(_img_ctx.pending), "Increase IMAGE_MAX to create more images")
+	append(&_img_ctx.pending, _Image_Pending{
 		pixels = pixels_copy,
 		width  = u32(inner_surface.w),
 		height = u32(inner_surface.h),
 		slot   = slot,
 		bpp    = bpp,
-	}
-	_img_ctx.pending_count += 1
+	})
 
 	// Destroy the converted surface if we created one
 
@@ -213,9 +213,8 @@ _Image_Pending :: struct {
 _Image_Context :: struct {
 	initialized:                 bool,
 	images:                      []_Image,
-	pending:                     [IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
+	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
-	pending_count:               uint,
 	pool:                        ^Pool,
 	texture_transfer_buffer:     ^sdl.GPUTransferBuffer,
 	texture_transfer_buffer_size: uint,
@@ -275,13 +274,12 @@ _image_shutdown :: proc (allocator := context.allocator) {
 // information about the error.
 @(private)
 _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.allocator) {
-	if _img_ctx.pending_count == 0 {
+	if len(_img_ctx.pending) == 0 {
 		return
 	}
 
 	total_size: uint = 0
-	for i in 0 ..< _img_ctx.pending_count {
-		pending := &_img_ctx.pending[i]
+	for &pending in _img_ctx.pending {
 		total_size += uint(pending.width) * uint(pending.height) * uint(pending.bpp)
 	}
 
@@ -326,8 +324,7 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 	copy_pass := sdl.BeginGPUCopyPass(cmd_buffer)
 	offset: uint = 0
 
-	for i in 0 ..< _img_ctx.pending_count {
-		pending := &_img_ctx.pending[i]
+	for &pending in _img_ctx.pending {
 		size := u32(pending.width) * u32(pending.height) * u32(pending.bpp)
 
 		mem.copy(mem.ptr_offset(cast([^]u8)texture_transfer_ptr, int(offset)), pending.pixels, int(size))
@@ -355,5 +352,5 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 	sdl.EndGPUCopyPass(copy_pass)
 	sdl.UnmapGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
 
-	_img_ctx.pending_count = 0
+	resize(&_img_ctx.pending, 0)
 }

@@ -108,13 +108,11 @@ _Gp :: struct {
 	white_image:            Image,
 
 	// States stack
-	current_state: u32,
-	states:        [STATE_MAX]State,
-	state:         State,
+	states: [dynamic; STATE_MAX]State,
+	state:  State,
 
 	// Transforms stack
-	current_transform: u32,
-	transforms:        [TRANSFORMS_MAX]Mat,
+	transforms: [dynamic; TRANSFORMS_MAX]Mat,
 
 	// configurable in Desc
 	current_vertex: u32,
@@ -360,8 +358,8 @@ shutdown :: proc (allocator := context.allocator) {
 begin :: proc (size: Vec2i) -> bool {
 	assert(_gp.initialized)
 
-	_gp.states[_gp.current_state] = _gp.state
-	_gp.current_state += 1
+	assert(len(_gp.states) < cap(_gp.states))
+	append(&_gp.states, _gp.state)
 
 	w, h := f32(size.x), f32(size.y)
 
@@ -400,7 +398,7 @@ begin :: proc (size: Vec2i) -> bool {
 // occurred, use get_last_error() to get more information about the error.
 flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> bool {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(cmd_buffer != nil)
 	assert(texture != nil)
 
@@ -577,8 +575,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 end :: proc () {
 	assert(_gp.initialized)
 
-	_gp.current_state -= 1
-	_gp.state = _gp.states[_gp.current_state]
+	_gp.state = pop(&_gp.states)
 }
 
 // Painter (Private): batching internals
@@ -872,7 +869,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: _Region, vertex_index: u32, ver
 @(private)
 _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	if len(vertices) == 0 do return
 
@@ -912,14 +909,14 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 // Get the current transform matrix.
 get_matrix :: proc () -> Mat {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	return _gp.state.transform
 }
 
 // Set the current transform matrix (recomputes the MVP immediately).
 set_matrix :: proc (m: Mat) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	_gp.state.transform = m
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
 }
@@ -942,7 +939,7 @@ mat3_get   :: get_mat3
 // Set the coordinate space boundaries in the current viewport.
 set_projection :: proc (left, right, bottom, top: f32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	width := right - left
 	height := top - bottom
@@ -956,7 +953,7 @@ set_projection :: proc (left, right, bottom, top: f32) {
 // coordinate of the current viewport.
 reset_projection :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	w := f32(_gp.state.viewport.size.x)
 	h := f32(_gp.state.viewport.size.y)
@@ -973,21 +970,19 @@ projection_reset :: reset_projection
 // with pop_transform.
 push_transform :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
-	assert(_gp.current_transform < TRANSFORMS_MAX)
+	assert(len(_gp.states) > 0)
+	assert(len(_gp.transforms) < cap(_gp.transforms))
 
-	_gp.transforms[_gp.current_transform] = _gp.state.transform
-	_gp.current_transform += 1
+	append(&_gp.transforms, _gp.state.transform)
 }
 
 // Restore the transform matrix from the top of the transform stack.
 pop_transform :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
-	assert(_gp.current_transform > 0)
+	assert(len(_gp.states) > 0)
+	assert(len(_gp.transforms) > 0)
 
-	_gp.current_transform -= 1
-	_gp.state.transform = _gp.transforms[_gp.current_transform]
+	_gp.state.transform = pop(&_gp.transforms)
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
 }
 
@@ -1010,7 +1005,7 @@ transform_reset :: reset_transform
 
 translate_xy :: proc (x, y: f32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	_gp.state.transform[0, 2] += x * _gp.state.transform[0, 0] + y * _gp.state.transform[0, 1]
 	_gp.state.transform[1, 2] += x * _gp.state.transform[1, 0] + y * _gp.state.transform[1, 1]
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
@@ -1024,7 +1019,7 @@ translate :: proc{translate_xy, translate_vec}
 
 rotate :: proc (angle: f32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	c := math.cos(angle)
 	s := math.sin(angle)
 	t := _gp.state.transform
@@ -1043,7 +1038,7 @@ rotate_at :: proc (angle, ax, ay: f32) {
 
 scale_xy :: proc (sx, sy: f32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	_gp.state.transform[0, 0] *= sx
 	_gp.state.transform[0, 1] *= sy
 	_gp.state.transform[1, 0] *= sx
@@ -1128,7 +1123,7 @@ uniform_reset :: reset_uniform
 // Set the current blend mode.
 set_blend_mode :: proc (blend_mode: Blend_Mode) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	_gp.state.blend_mode = blend_mode
 }
@@ -1136,7 +1131,7 @@ set_blend_mode :: proc (blend_mode: Blend_Mode) {
 // Reset the current blend mode to the default blend mode (no blending).
 reset_blend_mode :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	_gp.state.blend_mode = .None
 }
@@ -1147,7 +1142,7 @@ blend_mode_reset :: reset_blend_mode
 // Sets current color.
 set_color :: proc (color: Color) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	_gp.state.color = color
 }
@@ -1155,7 +1150,7 @@ set_color :: proc (color: Color) {
 // Gets current color.
 get_color :: proc () -> Color {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	return _gp.state.color
 }
@@ -1163,7 +1158,7 @@ get_color :: proc () -> Color {
 // Reset current color to the default color (white).
 reset_color :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	_gp.state.color = {255, 255, 255, 255}
 }
@@ -1175,7 +1170,7 @@ color_reset :: reset_color
 // Sets current bound image in a texture channel.
 set_image :: proc (channel: i32, image: Image) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	ch := int(channel)
@@ -1201,7 +1196,7 @@ set_image :: proc (channel: i32, image: Image) {
 // texture).
 reset_image :: proc (channel: i32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	set_image(channel, _gp.white_image)
@@ -1213,7 +1208,7 @@ image_reset :: reset_image
 // Remove current bound image from a texture channel (no texture).
 unset_image :: proc (channel: i32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	set_image(channel, Image{INVALID_ID})
@@ -1222,7 +1217,7 @@ unset_image :: proc (channel: i32) {
 // Set current bound sampler in a texture channel.
 set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	_gp.state.texture.samplers[int(channel)] = sampler
@@ -1231,7 +1226,7 @@ set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
 // Remove current bound sampler from a texture channel (no sampler).
 unset_sampler :: proc (channel: i32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	_gp.state.texture.samplers[int(channel)] = nil
@@ -1241,7 +1236,7 @@ unset_sampler :: proc (channel: i32) {
 // sampler).
 reset_sampler :: proc (channel: i32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	_gp.state.texture.samplers[int(channel)] = _gp.nearest_samplers
@@ -1253,7 +1248,7 @@ sampler_reset :: reset_sampler
 // Set the screen are to draw to.
 set_viewport_xy :: proc (x, y, w, h: i32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	viewport := Recti{{x, y}, {w, h}}
 
@@ -1290,7 +1285,7 @@ set_viewport_xy :: proc (x, y, w, h: i32) {
 // Set the screen area to draw to from an integer rect (shares the body above).
 set_viewport_rect :: proc (r: Recti) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	set_viewport_xy(r.pos.x, r.pos.y, r.size.x, r.size.y)
 }
@@ -1300,7 +1295,7 @@ set_viewport :: proc{set_viewport_xy, set_viewport_rect}
 // Reset the viewport to default (0, 0, width, height).
 reset_viewport :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	set_viewport(0, 0, _gp.state.frame_size.x, _gp.state.frame_size.y)
 }
@@ -1311,7 +1306,7 @@ viewport_reset :: reset_viewport
 // Set the clipping rectangle in the viewport.
 set_scissor_xy :: proc (x, y, w, h: i32) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	scissor := Recti{{x, y}, {w, h}}
 
@@ -1347,7 +1342,7 @@ set_scissor_xy :: proc (x, y, w, h: i32) {
 // Set the clipping rectangle from an integer rect (shares the body above).
 set_scissor_rect :: proc (r: Recti) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	set_scissor_xy(r.pos.x, r.pos.y, r.size.x, r.size.y)
 }
@@ -1357,7 +1352,7 @@ set_scissor :: proc{set_scissor_xy, set_scissor_rect}
 // Reset the clipping rectangle to default (viewport bounds).
 reset_scissor :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	_gp.state.scissor = Recti{{0, 0}, {-1, -1}}
 }
@@ -1368,7 +1363,7 @@ scissor_reset :: reset_scissor
 // Reset all state to default.
 reset_state :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	reset_viewport()
 	reset_scissor()
@@ -1385,7 +1380,7 @@ state_reset :: reset_state
 // Clear the current viewport with the current color.
 clear :: proc () {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	// Setup vertices
 	vertices_count := u32(6)
@@ -1424,7 +1419,7 @@ clear :: proc () {
 // Draw any primitive.
 draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	if len(vertices) == 0 {
 		return
@@ -1512,7 +1507,7 @@ draw_triangle_strip :: proc (points: []Vec2) {
 // Draw rectangles in batch.
 draw_rects :: proc (rects: []Rect) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 
 	if len(rects) == 0 {
 		return
@@ -1616,7 +1611,7 @@ draw_textured_rect_xywh_i :: proc (channel: i32, x, y, w, h: i32, src: Rect) {
 // Draw textured rectangles in batch.
 draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 	assert(_gp.initialized)
-	assert(_gp.current_state > 0)
+	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
 	if len(rects) == 0 {
