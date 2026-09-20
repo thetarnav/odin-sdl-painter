@@ -7,11 +7,11 @@ import sdl "vendor:sdl3"
 Blend_Mode :: enum u32 {
 	None                = 0,
 	Blend               = 1,
-	Blend_Premultiplied = 16,
 	Add                 = 2,
-	Add_Premultiplied   = 32,
-	Mod                 = 4,
-	Mul                 = 8,
+	Mod                 = 3,
+	Mul                 = 4,
+	Blend_Premultiplied = 5,
+	Add_Premultiplied   = 6,
 }
 
 Primitive_Type :: enum u32 {

@@ -123,24 +123,9 @@ _Gp :: struct {
 
 _gp: _Gp
 
-// Map a blend mode to a dense pipeline cache slot (C indexes the cache by
-// raw SDL_BlendMode values, which are sparse; dense slots avoid OOB).
-// Dense pipeline-cache slot per blend mode. SDL blend values are sparse, so
-// the cache indexes through this table. Unknown/size entry pins to slot 0,
-// preserving the old branch fallback.
-BLEND_SLOT := #sparse [Blend_Mode]int{
-	.None                = 0,
-	.Blend               = 1,
-	.Add                 = 2,
-	.Mod                 = 3,
-	.Mul                 = 4,
-	.Blend_Premultiplied = 5,
-	.Add_Premultiplied   = 6,
-}
-
 @(private)
 _pipeline_index :: proc (primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> int {
-	return int(primitive_type) * len(Blend_Mode) + BLEND_SLOT[blend_mode]
+	return int(primitive_type) * len(Blend_Mode) + int(blend_mode)
 }
 
 @(private)
