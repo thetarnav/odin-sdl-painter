@@ -5,6 +5,7 @@ package sdl_painter
 import sdl "vendor:sdl3"
 import "core:c"
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 
 Uniform_Slot :: enum u32 {
@@ -20,7 +21,7 @@ Vertex :: struct {
 
 #assert(size_of(Vertex) == 20, "Vertex layout changed, update pipeline vertex description")
 
-Textured_Rect :: struct { dst, src: Rect_Vec2 }
+Textured_Rect :: struct {dst, src: Rect}
 
 Uniform_Data :: union {
 	[UNIFORM_FLOATS_MAX]f32,
@@ -48,8 +49,8 @@ State :: struct {
 	pipeline:     Pipeline,
 	blend_mode:   Blend_Mode,
 	frame_size:   Vec2i,
-	viewport:     Rect_Vec2i,
-	scissor:      Rect_Vec2i,
+	viewport:     Recti,
+	scissor:      Recti,
 	color:        sdl.Color,
 	thickness:    f32,
 	base_uniform: u32,
@@ -68,7 +69,7 @@ Desc :: struct {
 // ----------------------------------------------------------------------------
 
 _Region :: struct {
-	x1, y1, x2, y2: f32,
+	min, max: Vec2,
 }
 
 _Command_Type :: enum u32 {
@@ -89,8 +90,8 @@ _Draw_Args :: struct {
 
 _Command_Args :: struct {
 	draw:     _Draw_Args,
-	viewport: Rect_Vec2i,
-	scissor:  Rect_Vec2i,
+	viewport: Recti,
+	scissor:  Recti,
 }
 
 _Command :: struct {
@@ -188,9 +189,9 @@ setup :: proc(desc: ^Desc, allocator := context.allocator) -> bool {
 	_gp.vertices_size = _gp.desc.max_vertices
 	_gp.commands_size = _gp.desc.max_commands
 	_gp.uniforms_size = _gp.desc.max_commands
-	_gp.vertices = make([]Vertex, int(_gp.vertices_size), allocator)
+	_gp.vertices = make([]Vertex,   int(_gp.vertices_size), allocator)
 	_gp.commands = make([]_Command, int(_gp.commands_size), allocator)
-	_gp.uniforms = make([]Uniform, int(_gp.uniforms_size), allocator)
+	_gp.uniforms = make([]Uniform,  int(_gp.uniforms_size), allocator)
 
 	// Setup resources management for shaders, pipelines and images
 
@@ -204,7 +205,7 @@ setup :: proc(desc: ^Desc, allocator := context.allocator) -> bool {
 	// Create a white texture
 
 	texture_format := sdl.GetGPUSwapchainTextureFormat(_img_ctx.gpu_device, _img_ctx.window)
-	pixel_format := sdl.GetPixelFormatFromGPUTextureFormat(texture_format)
+	pixel_format   := sdl.GetPixelFormatFromGPUTextureFormat(texture_format)
 	format_details := sdl.GetPixelFormatDetails(pixel_format)
 
 	white := sdl.MapRGBA(format_details, nil, 255, 255, 255, 255)
@@ -276,14 +277,14 @@ setup :: proc(desc: ^Desc, allocator := context.allocator) -> bool {
 	// Create common pipelines
 
 	is_ok := true
-	is_ok &= _find_or_create_pipeline(.Points, .None).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Points, .Blend).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Lines, .None).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Lines, .Blend).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Line_Strip, .None).id != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Points,     .None).id  != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Points,     .Blend).id != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Lines,      .None).id  != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Lines,      .Blend).id != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Line_Strip, .None).id  != INVALID_ID
 	is_ok &= _find_or_create_pipeline(.Line_Strip, .Blend).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Triangles, .None).id != INVALID_ID
-	is_ok &= _find_or_create_pipeline(.Triangles, .Blend).id != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Triangles,  .None).id  != INVALID_ID
+	is_ok &= _find_or_create_pipeline(.Triangles,  .Blend).id != INVALID_ID
 
 	if !is_ok {
 		_set_error(.Create_Common_Pipeline_Failed)
@@ -302,10 +303,10 @@ shutdown :: proc(allocator := context.allocator) {
 
 	// Destroy common pipelines
 
-	for i := 0; i < len(_gp.pipelines); i += 1 {
+	for i in 0 ..< len(_gp.pipelines) {
 		if _gp.pipelines[i].id != INVALID_ID {
 			destroy_pipeline(_gp.pipelines[i])
-			_gp.pipelines[i] = Pipeline{id = INVALID_ID}
+			_gp.pipelines[i] = Pipeline{INVALID_ID}
 		}
 	}
 
@@ -313,12 +314,12 @@ shutdown :: proc(allocator := context.allocator) {
 
 	if _gp.shader_vert.id != INVALID_ID {
 		destroy_shader(_gp.shader_vert)
-		_gp.shader_vert = Shader{id = INVALID_ID}
+		_gp.shader_vert = Shader{INVALID_ID}
 	}
 
 	if _gp.shader_frag.id != INVALID_ID {
 		destroy_shader(_gp.shader_frag)
-		_gp.shader_frag = Shader{id = INVALID_ID}
+		_gp.shader_frag = Shader{INVALID_ID}
 	}
 
 	// Destroy nearest sampler
@@ -346,7 +347,7 @@ shutdown :: proc(allocator := context.allocator) {
 
 	if _gp.white_image.id != INVALID_ID {
 		destroy_image(_gp.white_image)
-		_gp.white_image = Image{id = INVALID_ID}
+		_gp.white_image = Image{INVALID_ID}
 	}
 
 	// Shutdown resources management for shaders, pipelines and images
@@ -383,7 +384,7 @@ begin :: proc(width, height: i32) -> bool {
 	_gp.state.texture.images[0] = _gp.white_image
 	_gp.state.texture.samplers[0] = _gp.nearest_samplers
 
-	invalid_image := Image{id = INVALID_ID}
+	invalid_image := Image{INVALID_ID}
 	for i := 1; i < TEXTURE_SLOTS_MAX; i += 1 {
 		_gp.state.texture.images[i] = invalid_image
 		_gp.state.texture.samplers[i] = _gp.nearest_samplers
@@ -394,8 +395,8 @@ begin :: proc(width, height: i32) -> bool {
 	_gp.state.blend_mode = .None
 
 	_gp.state.frame_size = {width, height}
-	_gp.state.viewport = Rect_Vec2i{pos = {0, 0}, size = {width, height}}
-	_gp.state.scissor = Rect_Vec2i{pos = {0, 0}, size = {-1, -1}}
+	_gp.state.viewport = Recti{{0, 0}, {width, height}}
+	_gp.state.scissor = Recti{{0, 0}, {-1, -1}}
 	_gp.state.color = sdl.Color{255, 255, 255, 255}
 
 	_gp.state.thickness = max(1.0 / w, 1.0 / h)
@@ -482,7 +483,7 @@ flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> bo
 	cur_pipeline_id: u32 = IMPOSSIBLE_ID
 	cur_uniform_index: u32 = IMPOSSIBLE_ID
 	cur_image_ids: [TEXTURE_SLOTS_MAX]u32
-	for i := 0; i < TEXTURE_SLOTS_MAX; i += 1 {
+	for i in 0 ..< TEXTURE_SLOTS_MAX {
 		cur_image_ids[i] = IMPOSSIBLE_ID
 	}
 
@@ -522,7 +523,7 @@ flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> bo
 			// Check if texture needs to be changed
 			image_bindings: [TEXTURE_SLOTS_MAX]sdl.GPUTextureSamplerBinding
 
-			for j := 0; j < TEXTURE_SLOTS_MAX; j += 1 {
+			for j in 0 ..< TEXTURE_SLOTS_MAX {
 				image_id: u32 = INVALID_ID
 
 				if j < int(draw.texture.count) {
@@ -667,7 +668,7 @@ _transform :: proc(m: Mat, dst, src: []Vec2) {
 
 @(private)
 _region_overlaps :: proc(a, b: _Region) -> bool {
-	return !(a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1)
+	return !(a.max.x <= b.min.x || b.max.x <= a.min.x || a.max.y <= b.min.y || b.max.y <= a.min.y)
 }
 
 @(private)
@@ -729,7 +730,7 @@ _merge_draw_commands :: proc(
 	overlaps_next := false
 	overlaps_prev := false
 	prev_region := prev_cmd.args.draw.region
-	for i := 0; i < inter_cmd_count; i += 1 {
+	for i in 0 ..< inter_cmd_count {
 		inter_region := inter_cmds[i].args.draw.region
 
 		if _region_overlaps(region, inter_region) {
@@ -770,15 +771,13 @@ _merge_draw_commands :: proc(
 			mem.copy_non_overlapping(&_gp.vertices[prev_end_vertex], &_gp.vertices[vertex_index + vertices_count], int(vertices_count) * size_of(Vertex))
 
 			// Offset vertices of inter_cmds
-			for i := 0; i < inter_cmd_count; i += 1 {
+			for i in 0 ..< inter_cmd_count {
 				inter_cmds[i].args.draw.vertex_index += vertices_count
 			}
 		}
 
 		// Update draw region and vertices
-		prev_lo := Vec2{min(prev_region.x1, region.x1), min(prev_region.y1, region.y1)}
-		prev_hi := Vec2{max(prev_region.x2, region.x2), max(prev_region.y2, region.y2)}
-		prev_region = _Region{prev_lo.x, prev_lo.y, prev_hi.x, prev_hi.y}
+		prev_region = {linalg.min(prev_region.min, region.min), linalg.max(prev_region.max, region.max)}
 		prev_cmd.args.draw.vertices_count += vertices_count
 		prev_cmd.args.draw.region = prev_region
 	} else { 	// Merge with the next draw command
@@ -808,9 +807,7 @@ _merge_draw_commands :: proc(
 		mem.copy_non_overlapping(&_gp.vertices[vertex_index], &_gp.vertices[prev_cmd.args.draw.vertex_index], int(prev_vertices_count) * size_of(Vertex))
 
 		// Update draw region and vertices
-		prev_lo := Vec2{min(prev_region.x1, region.x1), min(prev_region.y1, region.y1)}
-		prev_hi := Vec2{max(prev_region.x2, region.x2), max(prev_region.y2, region.y2)}
-		prev_region = _Region{prev_lo.x, prev_lo.y, prev_hi.x, prev_hi.y}
+		prev_region = {linalg.min(prev_region.min, region.min), linalg.max(prev_region.max, region.max)}
 		_gp.current_vertex += prev_vertices_count
 		vertices_count += prev_vertices_count
 
@@ -839,7 +836,7 @@ _queue_draw :: proc(pipeline: Pipeline, region: _Region, vertex_index: u32, vert
 	}
 
 	// If the region is completely outside of the viewport, skip the draw call
-	if region.x1 > 1.0 || region.y1 > 1.0 || region.x2 < -1.0 || region.y2 < -1.0 {
+	if region.min.x > 1.0 || region.min.y > 1.0 || region.max.x < -1.0 || region.max.y < -1.0 {
 		_gp.current_vertex -= vertices_count // rollback allocated vertices
 		return
 	}
@@ -910,8 +907,8 @@ _draw_solid :: proc(primitive_type: Primitive_Type, vertices: [^]Vec2, vertices_
 	}
 	color := _gp.state.color
 	mvp := _gp.state.mvp
-	lo := Vec2{max(f32), max(f32)}
-	hi := Vec2{-max(f32), -max(f32)}
+	lo := Vec2(max(f32))
+	hi := Vec2(-max(f32))
 	pad := Vec2{thickness, thickness}
 
 	for i: u32 = 0; i < vertices_count; i += 1 {
@@ -925,7 +922,7 @@ _draw_solid :: proc(primitive_type: Primitive_Type, vertices: [^]Vec2, vertices_
 		v[i].color = color
 	}
 
-	region := _Region{lo.x, lo.y, hi.x, hi.y}
+	region := _Region{lo, hi}
 
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
@@ -958,6 +955,15 @@ set_mat3 :: proc(m: Mat3) {
 	set_matrix(from_mat3(m))
 }
 
+// Alias (see canonical above).
+matrix_set :: set_matrix
+// Alias (see canonical above).
+matrix_get :: get_matrix
+// Alias (see canonical above).
+mat3_set   :: set_mat3
+// Alias (see canonical above).
+mat3_get   :: get_mat3
+
 // Set the coordinate space boundaries in the current viewport.
 set_projection :: proc(left, right, bottom, top: f32) {
 	assert(_gp.initialized == _INIT_COOKIE)
@@ -985,6 +991,11 @@ reset_projection :: proc() {
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
 }
 
+// Alias (see canonical above).
+projection_set   :: set_projection
+// Alias (see canonical above).
+projection_reset :: reset_projection
+
 // Save the current transform matrix on the transform stack. To be pop later
 // with pop_transform.
 push_transform :: proc() {
@@ -1007,10 +1018,27 @@ pop_transform :: proc() {
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
 }
 
+// Scoped transform guard: pushes and auto-pops at scope end, safe on early return.
+// Usage: if transform_scope() { ... }
+// (Deferred-procedure association: @(deferred_none=...) lives on this declaration,
+// so the pop runs at the end of the caller's if-block scope, even on early return.)
+@(deferred_none=pop_transform)
+transform_scope :: proc() -> bool {
+	push_transform()
+	return true
+}
+
 // Set the current transform matrix to identity (no transformation).
 reset_transform :: proc() {
 	set_matrix(MAT_IDENTITY)
 }
+
+// Alias (see canonical above).
+transform_push  :: push_transform
+// Alias (see canonical above).
+transform_pop   :: pop_transform
+// Alias (see canonical above).
+transform_reset :: reset_transform
 
 translate_xy :: proc(x, y: f32) {
 	assert(_gp.initialized == _INIT_COOKIE)
@@ -1081,10 +1109,15 @@ set_pipeline :: proc(pipeline: Pipeline) {
 reset_pipeline :: proc() {
 	assert(_gp.initialized == _INIT_COOKIE)
 
-	pipeline := Pipeline{id = INVALID_ID}
+	pipeline := Pipeline{INVALID_ID}
 
 	set_pipeline(pipeline)
 }
+
+// Alias (see canonical above).
+pipeline_set   :: set_pipeline
+// Alias (see canonical above).
+pipeline_reset :: reset_pipeline
 
 // Set uniform data for the current pipeline.
 set_uniform :: proc(vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i32) {
@@ -1123,6 +1156,11 @@ reset_uniform :: proc() {
 	set_uniform(nil, 0, nil, 0)
 }
 
+// Alias (see canonical above).
+uniform_set   :: set_uniform
+// Alias (see canonical above).
+uniform_reset :: reset_uniform
+
 // Set the current blend mode.
 set_blend_mode :: proc(blend_mode: Blend_Mode) {
 	assert(_gp.initialized == _INIT_COOKIE)
@@ -1138,6 +1176,11 @@ reset_blend_mode :: proc() {
 
 	_gp.state.blend_mode = .None
 }
+
+// Alias (see canonical above).
+blend_mode_set   :: set_blend_mode
+// Alias (see canonical above).
+blend_mode_reset :: reset_blend_mode
 
 // Sets current color.
 set_color :: proc(color: sdl.Color) {
@@ -1162,6 +1205,13 @@ reset_color :: proc() {
 
 	_gp.state.color = sdl.Color{255, 255, 255, 255}
 }
+
+// Alias (see canonical above).
+color_set   :: set_color
+// Alias (see canonical above).
+color_get   :: get_color
+// Alias (see canonical above).
+color_reset :: reset_color
 
 // Sets current bound image in a texture channel.
 set_image :: proc(channel: i32, image: Image) {
@@ -1198,13 +1248,18 @@ reset_image :: proc(channel: i32) {
 	set_image(channel, _gp.white_image)
 }
 
+// Alias (see canonical above).
+image_set   :: set_image
+// Alias (see canonical above).
+image_reset :: reset_image
+
 // Remove current bound image from a texture channel (no texture).
 unset_image :: proc(channel: i32) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	set_image(channel, Image{id = INVALID_ID})
+	set_image(channel, Image{INVALID_ID})
 }
 
 // Set current bound sampler in a texture channel.
@@ -1235,12 +1290,17 @@ reset_sampler :: proc(channel: i32) {
 	_gp.state.texture.samplers[int(channel)] = _gp.nearest_samplers
 }
 
+// Alias (see canonical above).
+sampler_set   :: set_sampler
+// Alias (see canonical above).
+sampler_reset :: reset_sampler
+
 // Set the screen are to draw to.
 set_viewport_xy :: proc(x, y, w, h: i32) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
-	viewport := Rect_Vec2i{pos = {x, y}, size = {w, h}}
+	viewport := Recti{{x, y}, {w, h}}
 
 	// If no change in viewport, skip
 	if _gp.state.viewport == viewport {
@@ -1273,7 +1333,7 @@ set_viewport_xy :: proc(x, y, w, h: i32) {
 }
 
 // Set the screen area to draw to from an integer rect (shares the body above).
-set_viewport_rect :: proc(r: Rect_Vec2i) {
+set_viewport_rect :: proc(r: Recti) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
@@ -1290,12 +1350,17 @@ reset_viewport :: proc() {
 	set_viewport(0, 0, _gp.state.frame_size.x, _gp.state.frame_size.y)
 }
 
+// Alias (see canonical above).
+viewport_set   :: set_viewport
+// Alias (see canonical above).
+viewport_reset :: reset_viewport
+
 // Set the clipping rectangle in the viewport.
 set_scissor_xy :: proc(x, y, w, h: i32) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
-	scissor := Rect_Vec2i{pos = {x, y}, size = {w, h}}
+	scissor := Recti{{x, y}, {w, h}}
 
 	// Skip if scissor is the same
 	if _gp.state.scissor == scissor {
@@ -1312,10 +1377,7 @@ set_scissor_xy :: proc(x, y, w, h: i32) {
 	}
 
 	// Coordinates scissor relative to viewport
-	viewport_scissor := Rect_Vec2i{
-		pos  = _gp.state.viewport.pos + Vec2i{x, y},
-		size = {w, h},
-	}
+	viewport_scissor := Recti{_gp.state.viewport.pos + Vec2i{x, y}, {w, h}}
 
 	// Reset scissor
 	if w < 0 && h < 0 {
@@ -1330,7 +1392,7 @@ set_scissor_xy :: proc(x, y, w, h: i32) {
 }
 
 // Set the clipping rectangle from an integer rect (shares the body above).
-set_scissor_rect :: proc(r: Rect_Vec2i) {
+set_scissor_rect :: proc(r: Recti) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
@@ -1344,8 +1406,13 @@ reset_scissor :: proc() {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
-	_gp.state.scissor = Rect_Vec2i{pos = {0, 0}, size = {-1, -1}}
+	_gp.state.scissor = Recti{{0, 0}, {-1, -1}}
 }
+
+// Alias (see canonical above).
+scissor_set   :: set_scissor
+// Alias (see canonical above).
+scissor_reset :: reset_scissor
 
 // Reset all state to default.
 reset_state :: proc() {
@@ -1361,6 +1428,9 @@ reset_state :: proc() {
 	reset_uniform()
 	reset_pipeline()
 }
+
+// Alias (see canonical above).
+state_reset :: reset_state
 
 // Clear the current viewport with the current color.
 clear :: proc() {
@@ -1394,7 +1464,7 @@ clear :: proc() {
 	v[4] = Vertex{position = quad[3], texcoord = texcoord, color = color}
 	v[5] = Vertex{position = quad[0], texcoord = texcoord, color = color}
 
-	region := _Region{-1.0, -1.0, 1.0, 1.0}
+	region := _Region{{-1, -1}, {1, 1}}
 
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
@@ -1402,13 +1472,14 @@ clear :: proc() {
 }
 
 // Draw any primitive.
-draw :: proc(primitive_type: Primitive_Type, vertices: [^]Vertex, #any_int vertices_count: u32) {
+draw :: proc(primitive_type: Primitive_Type, vertices: []Vertex) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
-	if vertices_count == 0 {
+	if len(vertices) == 0 {
 		return
 	}
+	vertices_count := u32(len(vertices))
 
 	// Setup vertices
 	vertex_index := _gp.current_vertex
@@ -1422,8 +1493,8 @@ draw :: proc(primitive_type: Primitive_Type, vertices: [^]Vertex, #any_int verti
 		thickness = _gp.state.thickness
 	}
 	mvp := _gp.state.mvp
-	lo := Vec2{max(f32), max(f32)}
-	hi := Vec2{-max(f32), -max(f32)}
+	lo := Vec2(max(f32))
+	hi := Vec2(-max(f32))
 	pad := Vec2{thickness, thickness}
 
 	for i: u32 = 0; i < vertices_count; i += 1 {
@@ -1437,7 +1508,7 @@ draw :: proc(primitive_type: Primitive_Type, vertices: [^]Vertex, #any_int verti
 		v[i].color = vertices[i].color
 	}
 
-	region := _Region{lo.x, lo.y, hi.x, hi.y}
+	region := _Region{lo, hi}
 
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
@@ -1446,59 +1517,59 @@ draw :: proc(primitive_type: Primitive_Type, vertices: [^]Vertex, #any_int verti
 }
 
 // Draw points in batch.
-draw_points :: proc(points: [^]Point, #any_int count: u32) {
-	_draw_solid(.Points, points, count)
+draw_points :: proc(points: []Point) {
+	_draw_solid(.Points, raw_data(points), u32(len(points)))
 }
 
 // Draw a single point.
 draw_point_single :: proc(point: Point) {
 	p := point
-	draw_points(([^]Point)(&p), 1)
+	draw_points([]Point{p})
 }
 
 // Draw lines in batch.
-draw_lines :: proc(lines: [^]Line, #any_int count: u32) {
-	_draw_solid(.Lines, cast([^]Vec2)lines, count * 2)
+draw_lines :: proc(lines: []Line) {
+	_draw_solid(.Lines, cast([^]Vec2)raw_data(lines), u32(len(lines)) * 2)
 }
 
 // Draw a single line.
 draw_line_single :: proc(line: Line) {
 	l := line
-	draw_lines(([^]Line)(&l), 1)
+	draw_lines([]Line{l})
 }
 
 // Draw a stip of lines.
-draw_line_strip :: proc(points: [^]Vec2, #any_int count: u32) {
-	_draw_solid(.Line_Strip, points, count)
+draw_line_strip :: proc(points: []Vec2) {
+	_draw_solid(.Line_Strip, raw_data(points), u32(len(points)))
 }
 
 // Draw triangles in batch.
-draw_triangles :: proc(triangles: [^]Triangle, #any_int count: u32) {
-	_draw_solid(.Triangles, cast([^]Vec2)triangles, count * 3)
+draw_triangles :: proc(triangles: []Triangle) {
+	_draw_solid(.Triangles, cast([^]Vec2)raw_data(triangles), u32(len(triangles)) * 3)
 }
 
 // Draw a single triangle.
 draw_triangle_single :: proc(triangle: Triangle) {
 	t := triangle
-	draw_triangles(([^]Triangle)(&t), 1)
+	draw_triangles([]Triangle{t})
 }
 
 // Draw a strip of triangles.
-draw_triangle_strip :: proc(points: [^]Vec2, #any_int count: u32) {
-	_draw_solid(.Triangle_Strip, points, count)
+draw_triangle_strip :: proc(points: []Vec2) {
+	_draw_solid(.Triangle_Strip, raw_data(points), u32(len(points)))
 }
 
 // Draw rectangles in batch.
-draw_rects :: proc(rects: [^]Rect_Vec2, count: u32) {
+draw_rects :: proc(rects: []Rect) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 
-	if count == 0 {
+	if len(rects) == 0 {
 		return
 	}
 
 	// Setup vertices
-	total_vertices := count * 6 // 2 triangles per rect, 3 vertices each
+	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
 	vertex_index := _gp.current_vertex
 	v := _next_vertices(total_vertices)
 	if v == nil {
@@ -1508,10 +1579,10 @@ draw_rects :: proc(rects: [^]Rect_Vec2, count: u32) {
 	// Compute vertices
 	color := _gp.state.color
 	mvp := _gp.state.mvp
-	lo := Vec2{max(f32), max(f32)}
-	hi := Vec2{-max(f32), -max(f32)}
+	lo := Vec2(max(f32))
+	hi := Vec2(-max(f32))
 
-	for i: u32 = 0; i < count; i += 1 {
+	for i in 0 ..< len(rects) {
 		rect := &rects[i]
 		quad := [4]Vec2{
 			rect.pos + {0, rect.size.y}, // bottom-left
@@ -1544,7 +1615,7 @@ draw_rects :: proc(rects: [^]Rect_Vec2, count: u32) {
 		v[o + 5] = Vertex{position = quad[2], texcoord = texcoords[2], color = color}
 	}
 
-	region := _Region{lo.x, lo.y, hi.x, hi.y}
+	region := _Region{lo, hi}
 
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
@@ -1553,23 +1624,57 @@ draw_rects :: proc(rects: [^]Rect_Vec2, count: u32) {
 }
 
 // Draw a single rectangle.
-draw_rect_single :: proc(rect: Rect_Vec2) {
+draw_rect_single :: proc(rect: Rect) {
 	r := rect
-	draw_rects(([^]Rect_Vec2)(&r), 1)
+	draw_rects({r})
+}
+
+// Draw a single rectangle from position + size vectors.
+draw_rect_vec :: proc(pos, size: Vec2) {
+	draw_rect_single({pos, size})
+}
+
+// Draw a single rectangle from x, y, width, height.
+draw_rect_xywh :: proc(x, y, w, h: f32) {
+	draw_rect_single({{x, y}, {w, h}})
+}
+
+// Integer variants.
+
+draw_rect_vec_i :: proc(pos, size: Vec2i) {
+	draw_rect_single(rect_to_float({pos, size}))
+}
+draw_rect_xywh_i :: proc(x, y, w, h: i32) {
+	draw_rect_single(rect_to_float({{x, y}, {w, h}}))
+}
+
+// Textured variants.
+
+draw_textured_rect_vec :: proc(channel: i32, pos, size: Vec2, src: Rect) {
+	draw_textured_rect_single(channel, {{pos, size}, src})
+}
+draw_textured_rect_xywh :: proc(channel: i32, x, y, w, h: f32, src: Rect) {
+	draw_textured_rect_single(channel, {{{x, y}, {w, h}}, src})
+}
+draw_textured_rect_vec_i :: proc(channel: i32, pos, size: Vec2i, src: Rect) {
+	draw_textured_rect_single(channel, {rect_to_float({pos, size}), src})
+}
+draw_textured_rect_xywh_i :: proc(channel: i32, x, y, w, h: i32, src: Rect) {
+	draw_textured_rect_single(channel, {rect_to_float({{x, y}, {w, h}}), src})
 }
 
 // Draw textured rectangles in batch.
-draw_textured_rects :: proc(channel: i32, rects: [^]Textured_Rect, #any_int count: u32) {
+draw_textured_rects :: proc(channel: i32, rects: []Textured_Rect) {
 	assert(_gp.initialized == _INIT_COOKIE)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	if count == 0 {
+	if len(rects) == 0 {
 		return
 	}
 
 	// Setup vertices
-	total_vertices := count * 6 // 2 triangles per rect, 3 vertices each
+	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
 	vertex_index := _gp.current_vertex
 	vertices := _next_vertices(total_vertices)
 	if vertices == nil {
@@ -1578,28 +1683,21 @@ draw_textured_rects :: proc(channel: i32, rects: [^]Textured_Rect, #any_int coun
 
 	// Get image info
 	image := _gp.state.texture.images[int(channel)]
-
-	width := get_image_width(image)
-	height := get_image_height(image)
-
-	// Check image dimension with unlikely
-
-	iw := 1.0 / f32(width)
-	ih := 1.0 / f32(height)
+	uv_scale := 1.0 / Vec2(get_image_size(image))
 
 	// Compute vertices
-	mvp := _gp.state.mvp
+	mvp   := _gp.state.mvp
 	color := _gp.state.color
-	lo := Vec2{max(f32), max(f32)}
-	hi := Vec2{-max(f32), -max(f32)}
+	lo := Vec2(max(f32))
+	hi := Vec2(-max(f32))
 
-	for i: u32 = 0; i < count; i += 1 {
-		dst := rects[i].dst
+	for rect, i in rects {
+		dst := rect.dst
 		quad := [4]Vec2{
 			dst.pos + {0, dst.size.y}, // bottom left
-			dst.pos + dst.size, // bottom right
+			dst.pos + dst.size,        // bottom right
 			dst.pos + {dst.size.x, 0}, // top right
-			dst.pos, // top left
+			dst.pos,                   // top left
 		}
 
 		_transform(mvp, quad[:], quad[:])
@@ -1609,28 +1707,26 @@ draw_textured_rects :: proc(channel: i32, rects: [^]Textured_Rect, #any_int coun
 			hi = {max(hi.x, q.x), max(hi.y, q.y)}
 		}
 
-		uv_scale := Vec2{iw, ih}
-		uv0 := Vec2(rects[i].src.pos) * uv_scale
-		uv1 := (Vec2(rects[i].src.pos) + Vec2(rects[i].src.size)) * uv_scale
+		uv0 := rects[i].src.pos * uv_scale
+		uv1 := (rects[i].src.pos + rects[i].src.size) * uv_scale
 
 		vtexquad := [4]Vec2{
 			{uv0.x, uv1.y}, // bottom-left
-			uv1, // bottom-right
+			uv1,            // bottom-right
 			{uv1.x, uv0.y}, // top-right
-			uv0, // top-left
+			uv0,            // top-left
 		}
 
-		o := i * 6
-		v := cast([^]Vertex)&vertices[o]
-		v[0] = Vertex{position = quad[0], texcoord = vtexquad[0], color = color}
-		v[1] = Vertex{position = quad[1], texcoord = vtexquad[1], color = color}
-		v[2] = Vertex{position = quad[2], texcoord = vtexquad[2], color = color}
-		v[3] = Vertex{position = quad[3], texcoord = vtexquad[3], color = color}
-		v[4] = Vertex{position = quad[0], texcoord = vtexquad[0], color = color}
-		v[5] = Vertex{position = quad[2], texcoord = vtexquad[2], color = color}
+		v := cast([^]Vertex)&vertices[i * 6]
+		v[0] = {quad[0], vtexquad[0], color}
+		v[1] = {quad[1], vtexquad[1], color}
+		v[2] = {quad[2], vtexquad[2], color}
+		v[3] = {quad[3], vtexquad[3], color}
+		v[4] = {quad[0], vtexquad[0], color}
+		v[5] = {quad[2], vtexquad[2], color}
 	}
 
-	region := _Region{lo.x, lo.y, hi.x, hi.y}
+	region := _Region{lo, hi}
 
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
@@ -1641,32 +1737,33 @@ draw_textured_rects :: proc(channel: i32, rects: [^]Textured_Rect, #any_int coun
 // Draw a single textured rectangle.
 draw_textured_rect_single :: proc(channel: i32, rect: Textured_Rect) {
 	r := rect
-	draw_textured_rects(channel, ([^]Textured_Rect)(&r), 1)
+	draw_textured_rects(channel, {r})
 }
 
 // Draw a single integer rect (converts once, shares the float queue path).
-draw_rect_i :: proc(rect: Rect_Vec2i) {
+draw_rect_i :: proc(rect: Recti) {
 	draw_rect_single(rect_to_float(rect))
 }
 
-draw_rects_i :: proc(rects: [^]Rect_Vec2i, count: u32) {
-	for i: u32 = 0; i < count; i += 1 {
-		draw_rect_single(rect_to_float(rects[i]))
+draw_rects_i :: proc(rects: []Recti) {
+	for rect in rects {
+		draw_rect_single(rect_to_float(rect))
 	}
 }
 
-draw_textured_rect_i :: proc(channel: i32, dst: Rect_Vec2i, src: Rect_Vec2) {
-	draw_textured_rect_single(channel, Textured_Rect{dst = rect_to_float(dst), src = src})
+draw_textured_rect_i :: proc(channel: i32, dst: Recti, src: Rect) {
+	draw_textured_rect_single(channel, {rect_to_float(dst), src})
 }
 
-draw_textured_rects_i :: proc(channel: i32, dst: [^]Rect_Vec2i, src: [^]Rect_Vec2, count: u32) {
-	for i: u32 = 0; i < count; i += 1 {
-		draw_textured_rect_single(channel, Textured_Rect{dst = rect_to_float(dst[i]), src = src[i]})
+draw_textured_rects_i :: proc(channel: i32, dst: []Recti, src: []Rect) {
+	assert(len(dst) == len(src))
+	for d, i in dst {
+		draw_textured_rect_single(channel, {rect_to_float(d), src[i]})
 	}
 }
 
-draw_point         :: proc{draw_point_single, draw_points}
-draw_line          :: proc{draw_line_single, draw_lines, draw_line_strip}
-draw_triangle      :: proc{draw_triangle_single, draw_triangles, draw_triangle_strip}
-draw_rect          :: proc{draw_rect_single, draw_rects, draw_rect_i, draw_rects_i}
-draw_textured_rect :: proc{draw_textured_rect_single, draw_textured_rects, draw_textured_rect_i, draw_textured_rects_i}
+draw_point         :: proc {draw_point_single, draw_points}
+draw_line          :: proc {draw_line_single, draw_lines, draw_line_strip}
+draw_triangle      :: proc {draw_triangle_single, draw_triangles, draw_triangle_strip}
+draw_rect          :: proc {draw_rect_single, draw_rects, draw_rect_i, draw_rects_i, draw_rect_vec, draw_rect_xywh, draw_rect_vec_i, draw_rect_xywh_i}
+draw_textured_rect :: proc {draw_textured_rect_single, draw_textured_rects, draw_textured_rect_i, draw_textured_rects_i, draw_textured_rect_vec, draw_textured_rect_xywh, draw_textured_rect_vec_i, draw_textured_rect_xywh_i}

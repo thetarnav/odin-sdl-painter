@@ -7,19 +7,19 @@ import gp ".."
 draw_rects :: proc (brightness, alpha: u8) {
 	// Red rectangle
 	gp.set_color({brightness, 0, 0, alpha})
-	gp.draw_rect(gp.Rect_Vec2{{10,10},{50,50}})
+	gp.draw_rect(gp.Rect{{10, 10}, {50, 50}})
 
 	gp.translate(10, 10)
 
 	// Green rectangle
 	gp.set_color({0, brightness, 0, alpha})
-	gp.draw_rect(gp.Rect_Vec2{{10,10},{50,50}})
+	gp.draw_rect(gp.Rect{{10, 10}, {50, 50}})
 
 	gp.translate(10, 10)
 
 	// Blue rectangle
 	gp.set_color({0, 0, brightness, alpha})
-	gp.draw_rect(gp.Rect_Vec2{{10,10},{50,50}})
+	gp.draw_rect(gp.Rect{{10, 10}, {50, 50}})
 }
 
 draw_checkboard :: proc (width, height: int) {
@@ -31,7 +31,7 @@ draw_checkboard :: proc (width, height: int) {
 				sdl.Color{150, 150, 150, 255} : \
 				sdl.Color{50, 50, 50, 255}
 			gp.set_color(color)
-			gp.draw_rect(gp.Rect_Vec2{{f32(x),f32(y)},{f32(size),f32(size)}})
+			gp.draw_rect(gp.Rect{{f32(x), f32(y)}, {f32(size), f32(size)}})
 		}
 	}
 }
@@ -54,10 +54,10 @@ sample_blend_render :: proc (delta_time_ms: u64) {
 	draw_checkboard(**window)
 
 	gp.blend_mode_set(.None)
-	gp.push_transform()
-	gp.translate(0, 0)
-	draw_rects(brightness, alpha)
-	gp.pop_transform()
+	if gp.transform_scope() {
+		gp.translate(0, 0)
+		draw_rects(brightness, alpha)
+	}
 
 	gp.blend_mode_set(.Blend)
 	gp.push_transform()

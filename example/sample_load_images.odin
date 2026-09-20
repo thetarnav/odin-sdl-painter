@@ -1,6 +1,7 @@
 package example
 
 import "core:c"
+import "core:log"
 import "core:math/rand"
 import sdl "vendor:sdl3"
 import gp ".."
@@ -15,7 +16,7 @@ sample_load_images_setup :: proc () {
 
 	surface := sdl.LoadSurface(#directory+"../images/hello-world.png")
 	if surface == nil {
-		sdl.Log("Failed to load image: %s", sdl.GetError())
+		log.errorf("Failed to load image: %s", sdl.GetError())
 	}
 
 	for &i in _images_setup {
@@ -29,7 +30,7 @@ frame_count: int
 
 sample_load_images_render :: proc (delta_time_ms: u64) {
 
-	sdl.Log("Frame count: %i", frame_count)
+	log.infof("Frame count: %i", frame_count)
 
 	window_width, window_height: c.int
 	sdl.GetWindowSize(_context.window, &window_width, &window_height)
@@ -42,7 +43,7 @@ sample_load_images_render :: proc (delta_time_ms: u64) {
 
 		surface := sdl.LoadSurface(#directory+"../images/sprites.png")
 		if surface == nil {
-			sdl.Log("Failed to load image: %s", sdl.GetError())
+			log.errorf("Failed to load image: %s", sdl.GetError())
 		}
 
 		for &i in _images_frame {
@@ -57,7 +58,7 @@ sample_load_images_render :: proc (delta_time_ms: u64) {
 	if frame_count >= TRIGGER_FRAME {
 
 		@static
-		tile_region := [3]gp.Rect_Vec2{
+		tile_region := [3]gp.Rect{
 			{{0, 0}, {32, 32}}, // tile 1
 			{{32, 0}, {32, 32}}, // tile 2
 			{{64, 0}, {32, 32}}, // tile 3
@@ -73,9 +74,9 @@ sample_load_images_render :: proc (delta_time_ms: u64) {
 			y := rand.int_max(window.y)
 
 			src_rect := tile_region[i % 3]
-			dst_rect := gp.Rect_Vec2{{f32(x), f32(y)}, {64, 64}}
+			dst_rect := gp.Rect{{f32(x), f32(y)}, {64, 64}}
 
-			gp.draw_textured_rect(0, {dst_rect, src_rect})
+			gp.draw_textured_rect(0, gp.Textured_Rect{dst_rect, src_rect})
 		}
 
 		gp.reset_image(0)
@@ -88,14 +89,13 @@ sample_load_images_render :: proc (delta_time_ms: u64) {
 
 	gp.set_color({255, 255, 255, 255})
 
-	width  := gp.get_image_width(image)
-	height := gp.get_image_height(image)
-	size   := gp.Vec2{f32(width), f32(height)}
+	size := gp.get_image_size(image)
+	sizef := gp.Vec2{f32(size.x), f32(size.y)}
 
-	src_rect := gp.Rect_Vec2{{0, 0}, {f32(width), f32(height)}}
-	dst_rect := gp.Rect_Vec2{(gp.Vec2(window) - size) * 0.5, size}
+	src_rect := gp.Rect{{0, 0}, sizef}
+	dst_rect := gp.Rect{(gp.Vec2(window) - sizef) * 0.5, sizef}
 
-	gp.draw_textured_rect(0, {dst_rect, src_rect})
+	gp.draw_textured_rect(0, gp.Textured_Rect{dst_rect, src_rect})
 	gp.reset_image(0)
 
 	gp.reset_blend_mode()

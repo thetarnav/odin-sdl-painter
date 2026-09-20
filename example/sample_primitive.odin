@@ -34,7 +34,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 		// -31 instead of -32 to draw points at the edges of the viewport
 		for y := 32; y < h.y - 31; y += 8 {
 			for x := 32; x < h.x - 31; x += 8 {
-				gp.draw_point({f32(x), f32(y)})
+				gp.draw_point(gp.Point{f32(x), f32(y)})
 			}
 		}
 	}
@@ -47,8 +47,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 		gp.set_color({20, 20, 20, 255})
 		gp.clear()
 
-		gp.push_transform()
-		{
+		if gp.transform_scope() {
 			// Move to the center of the left area of the viewport
 			gp.translate(gp.Vec2(h) * {0.25, 0.5})
 
@@ -59,13 +58,12 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 
 			gp.set_color({255, 0, 255, 255})
 
-			gp.draw_triangle({
+			gp.draw_triangle(gp.Triangle{
 				a = {          0, -half_shape},
 				b = { half_shape,  half_shape},
 				c = {-half_shape,  half_shape},
 			})
 		}
-		gp.pop_transform()
 
 		gp.push_transform()
 		{
@@ -98,7 +96,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 				v.color    = colors[i]
 			}
 
-			gp.draw(.Triangle_Strip, auto_cast &vertex_buffer, 3)
+			gp.draw(.Triangle_Strip, vertex_buffer[:])
 		}
 		gp.pop_transform()
 	}
@@ -142,7 +140,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 				}
 			}
 
-			gp.draw_triangle_strip(raw_data(points_buffer), len(points_buffer))
+			gp.draw_triangle_strip(points_buffer[:])
 		}
 		gp.pop_transform()
 
@@ -180,7 +178,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 				}
 			}
 
-			gp.draw(.Triangle_Strip, raw_data(vertex_buffer), len(vertex_buffer))
+			gp.draw(.Triangle_Strip, vertex_buffer[:])
 		}
 		gp.pop_transform()
 	}
@@ -205,10 +203,10 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 
 			gp.set_color({255, 255, 0, 255})
 
-			gp.draw_line({a = -half_shape,
+			gp.draw_line(gp.Line{a = -half_shape,
 			             b =  half_shape})
 
-			gp.draw_line({a = {half_shape, -half_shape},
+			gp.draw_line(gp.Line{a = {half_shape, -half_shape},
 			             b = {-half_shape, half_shape}})
 		}
 		gp.pop_transform()

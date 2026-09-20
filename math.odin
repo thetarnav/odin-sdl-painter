@@ -14,12 +14,12 @@ Line :: struct {a, b: Point}
 
 Triangle :: struct {a, b, c: Point}
 
-Rect_Vec2 :: struct {
+Rect :: struct {
 	using pos:  Vec2,
 	      size: Vec2,
 }
 
-Rect_Vec2i :: struct {
+Recti :: struct {
 	using pos:  Vec2i,
 	      size: Vec2i,
 }
@@ -35,8 +35,8 @@ MAT_IDENTITY :: Mat{1, 0, 0, 0, 1, 0}
 
 #assert(size_of(Mat) == 24, "Mat must stay 6 floats (2x3)")
 #assert(size_of(Mat3) == 36, "Mat3 must stay 9 floats (3x3)")
-#assert(size_of(Rect_Vec2) == 16, "Rect_Vec2 layout changed")
-#assert(size_of(Rect_Vec2i) == 16, "Rect_Vec2i layout changed")
+#assert(size_of(Rect) == 16, "Rect layout changed")
+#assert(size_of(Recti) == 16, "Recti layout changed")
 
 // Lift an affine 2x3 matrix to homogeneous 3x3 (bottom row 0, 0, 1).
 to_mat3 :: proc(m: Mat) -> Mat3 {
@@ -60,6 +60,6 @@ transform_point :: proc(m: Mat, p: Vec2) -> Vec2 {
 }
 
 // Convert an integer rect to a float rect (draw-group boundary helper).
-rect_to_float :: proc(r: Rect_Vec2i) -> Rect_Vec2 {
+rect_to_float :: proc(r: Recti) -> Rect {
 	return {Vec2(r.pos), Vec2(r.size)}
 }

@@ -78,13 +78,13 @@ create_pipeline :: proc(shader_vert, shader_frag: Shader, primitive_type: Primit
 
 	if pipeline == nil {
 		_set_error(.Create_Pipeline_Failed)
-		return Pipeline{id = INVALID_ID}
+		return Pipeline{INVALID_ID}
 	}
 
 	slot := acquire_pool_slot(_pipeline_ctx.pool)
 	if slot == POOL_INVALID_SLOT {
 		_set_error(.Create_Pipeline_Failed)
-		return Pipeline{id = INVALID_ID}
+		return Pipeline{INVALID_ID}
 	}
 
 	_pipeline_ctx.pipelines[slot] = _Pipeline{

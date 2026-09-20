@@ -1,6 +1,7 @@
 package example
 
 import "core:c"
+import "core:log"
 import "core:math/rand"
 import sdl "vendor:sdl3"
 import gp ".."
@@ -10,7 +11,7 @@ image_sprite: gp.Image
 sample_sprite_setup :: proc () {
 	surface := sdl.LoadSurface(#directory+"../images/sprites.png")
 	if surface == nil {
-		sdl.Log("Failed to load image: %s", sdl.GetError())
+		log.errorf("Failed to load image: %s", sdl.GetError())
 	}
 
 	image_sprite = gp.create_image(surface)
@@ -26,7 +27,7 @@ sample_sprite_render :: proc (delta_time_ms: u64) {
 
 	TILE :: [2]int{32, 32}
 
-	tile_region := [3]gp.Rect_Vec2{
+	tile_region := [3]gp.Rect{
 		{{0, 0}, {32, 32}}, // tile 1
 		{{32, 0}, {32, 32}}, // tile 2
 		{{64, 0}, {32, 32}}, // tile 3
@@ -41,9 +42,9 @@ sample_sprite_render :: proc (delta_time_ms: u64) {
 		y := rand.int_max(window.y)
 
 		src_rect := tile_region[i % 3]
-		dst_rect := gp.Rect_Vec2{{f32(x), f32(y)}, gp.Vec2(TILE*2)}
+		dst_rect := gp.Rect{{f32(x), f32(y)}, gp.Vec2(TILE * 2)}
 
-		gp.draw_textured_rect(0, {dst_rect, src_rect})
+		gp.draw_textured_rect(0, gp.Textured_Rect{dst_rect, src_rect})
 	}
 }
 

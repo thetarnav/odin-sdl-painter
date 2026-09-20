@@ -2,6 +2,7 @@ package example
 
 import "base:runtime"
 import "core:c"
+import "core:log"
 import sdl "vendor:sdl3"
 import gp ".."
 
@@ -44,10 +45,11 @@ main :: proc () {
 
 app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.AppResult {
 	context = runtime.default_context()
+	context.logger = log.create_console_logger()
 
 	// Init SDL
 	if !sdl.Init({.VIDEO}) {
-		sdl.Log("Couldn't initialize SDL: %s\n", sdl.GetError())
+		log.errorf("Couldn't initialize SDL: %s\n", sdl.GetError())
 		return .FAILURE
 	}
 
@@ -57,20 +59,20 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 		debug_mode=true,
 		name=nil)
 	if _context.gpu_device == nil {
-		sdl.Log("GPUCreateDevice failed: %s", sdl.GetError())
+		log.errorf("GPUCreateDevice failed: %s", sdl.GetError())
 		return .FAILURE
 	}
 
 	// Create a window
 	_context.window = sdl.CreateWindow("sdl.gp", WINDOW_WIDTH, WINDOW_HEIGHT, sdl.WINDOW_HIGH_PIXEL_DENSITY)
 	if _context.window == nil {
-		sdl.Log("CreateWindow failed: %s", sdl.GetError())
+		log.errorf("CreateWindow failed: %s", sdl.GetError())
 		return .FAILURE
 	}
 
 	// Claim the window for use with the GPU device
 	if !sdl.ClaimWindowForGPUDevice(_context.gpu_device, _context.window) {
-		sdl.Log("GPUClaimWindow failed")
+		log.errorf("GPUClaimWindow failed")
 		return .FAILURE
 	}
 

@@ -2,28 +2,27 @@
 // ----------------------------------------------------------------------------
 package sdl_painter
 
-import sdl "vendor:sdl3"
-import "core:c"
+import "core:log"
 
 Error :: enum u32 {
-	None                             = 0,
-	Setup_Image_Failed               = 1,
-	Flush_Image_Failed               = 2,
-	Create_Image_Failed              = 3,
-	Create_Shader_Failed             = 4,
-	Create_Pipeline_Failed           = 5,
-	Create_Common_Shader_Failed      = 6,
-	Create_White_Texture_Failed      = 7,
-	Create_Transfer_Buffer_Failed    = 8,
-	Create_Vertex_Buffer_Failed      = 9,
-	Create_Common_Pipeline_Failed    = 10,
-	Alloc_Failed                     = 11,
-	Uniforms_Full                    = 12,
-	Vertices_Full                    = 13,
-	Commands_Full                    = 14,
-	Flush_Failed                     = 15,
-	Acquire_Command_Buffer_Failed    = 16,
-	Acquire_Swapchain_Texture_Failed = 17,
+	None,
+	Setup_Image_Failed,
+	Flush_Image_Failed,
+	Create_Image_Failed,
+	Create_Shader_Failed,
+	Create_Pipeline_Failed,
+	Create_Common_Shader_Failed,
+	Create_White_Texture_Failed,
+	Create_Transfer_Buffer_Failed,
+	Create_Vertex_Buffer_Failed,
+	Create_Common_Pipeline_Failed,
+	Alloc_Failed,
+	Uniforms_Full,
+	Vertices_Full,
+	Commands_Full,
+	Flush_Failed,
+	Acquire_Command_Buffer_Failed,
+	Acquire_Swapchain_Texture_Failed,
 }
 
 // Error handling (Private)
@@ -33,7 +32,7 @@ _last_error: Error = .None
 
 @(private)
 _set_error :: proc(error: Error) {
-	sdl.LogError(c.int(sdl.LogCategory.VIDEO), "SDL_gp error: %s", get_error_message(error))
+	log.errorf("SDL_gp error: %s", get_error_message(error))
 	_last_error = error
 }
 
@@ -45,7 +44,7 @@ get_last_error :: proc() -> Error {
 
 // Get a human-readable string describing an Error value. Returns
 // "Unknown error" if the error value is not recognized.
-get_error_message :: proc(error: Error) -> cstring {
+get_error_message :: proc(error: Error) -> string {
 	switch error {
 	case .None:                             return "No error"
 	case .Setup_Image_Failed:               return "Failed to setup image resources"

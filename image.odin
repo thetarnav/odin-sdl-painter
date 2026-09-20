@@ -10,7 +10,7 @@
 package sdl_painter
 
 import sdl "vendor:sdl3"
-import "core:c"
+import "core:log"
 import "core:mem"
 
 Sampler :: enum u32 {
@@ -42,8 +42,7 @@ create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> I
 
 	converted := false
 	if surface.format != pixel_format {
-		sdl.LogWarn(
-			c.int(sdl.LogCategory.APPLICATION),
+		log.warnf(
 			"Converting image pixel format from %s to %s",
 			sdl.GetPixelFormatName(surface.format),
 			sdl.GetPixelFormatName(pixel_format),
@@ -53,7 +52,7 @@ create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> I
 
 		if inner_surface == nil {
 			_set_error(.Create_Image_Failed)
-			return Image{id = INVALID_ID}
+			return Image{INVALID_ID}
 		}
 
 		converted = true
@@ -77,7 +76,7 @@ create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> I
 
 	if texture == nil {
 		_set_error(.Create_Image_Failed)
-		return Image{id = INVALID_ID}
+		return Image{INVALID_ID}
 	}
 
 	// Allocate image from resource
@@ -86,7 +85,7 @@ create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> I
 	if slot == POOL_INVALID_SLOT {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 		_set_error(.Create_Image_Failed)
-		return Image{id = INVALID_ID}
+		return Image{INVALID_ID}
 	}
 
 	_img_ctx.images[slot] = _Image{
@@ -106,7 +105,7 @@ create_image :: proc(surface: ^sdl.Surface, allocator := context.allocator) -> I
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 		release_pool_slot(_img_ctx.pool, slot)
 		_set_error(.Create_Image_Failed)
-		return Image{id = INVALID_ID}
+		return Image{INVALID_ID}
 	}
 	mem.copy(pixels_copy, inner_surface.pixels, int(size))
 
@@ -185,6 +184,21 @@ get_image_height :: proc(image: Image) -> i32 {
 	slot := pool_id_to_slot(image.id)
 	return i32(_img_ctx.images[slot].height)
 }
+
+// Get the size of an image in pixels as a vector. Returns {0, 0} if the image is invalid.
+get_image_size :: proc(image: Image) -> Vec2i {
+	assert(_img_ctx.initialized == _INIT_COOKIE)
+
+	if image.id == INVALID_ID {
+		return {0, 0}
+	}
+
+	slot := pool_id_to_slot(image.id)
+	return {i32(_img_ctx.images[slot].width), i32(_img_ctx.images[slot].height)}
+}
+
+// Discoverability alias for the size query; canonical form is get_image_size.
+image_size :: get_image_size
 
 // Image (Private)
 // ----------------------------------------------------------------------------
@@ -272,7 +286,7 @@ _image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.all
 	}
 
 	total_size: uint = 0
-	for i: uint = 0; i < _img_ctx.pending_count; i += 1 {
+	for i in 0 ..< _img_ctx.pending_count {
 		pending := &_img_ctx.pending[i]
 		total_size += uint(pending.width) * uint(pending.height) * uint(pending.bpp)
 	}
@@ -291,9 +305,8 @@ _image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.all
 			new_size <<= 1
 		}
 
-		sdl.LogWarn(
-			c.int(sdl.LogCategory.APPLICATION),
-			"Total size of pending images (%zu) exceeds transfer buffer size (%zu), cycling transfer buffer",
+		log.warnf(
+			"Total size of pending images (%v) exceeds transfer buffer size (%v), cycling transfer buffer",
 			total_size,
 			_img_ctx.texture_transfer_buffer_size,
 		)
@@ -319,7 +332,7 @@ _image_flush :: proc(cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.all
 	copy_pass := sdl.BeginGPUCopyPass(cmd_buffer)
 	offset: uint = 0
 
-	for i: uint = 0; i < _img_ctx.pending_count; i += 1 {
+	for i in 0 ..< _img_ctx.pending_count {
 		pending := &_img_ctx.pending[i]
 		size := u32(pending.width) * u32(pending.height) * u32(pending.bpp)
 

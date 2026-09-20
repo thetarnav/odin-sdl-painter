@@ -47,9 +47,10 @@ odin run example/   # needs a display; arrow keys switch samples
 |---|---|
 | Frame | `setup`, `begin`, `flush`, `end`, `shutdown` |
 | Draw | `draw_rect`, `draw_textured_rect`, `draw_line`, `draw_triangle`, `draw_point`, `draw` (+ batch plurals in each group) |
-| State | `set_color`, `set_blend_mode`, `set_image`, `set_viewport`, `set_scissor`, `reset_state` (noun-verb aliases: `color_set`, `blend_mode_set`, `viewport_set`, … — see `aliases.odin`) |
+| State | `set_color`, `set_blend_mode`, `set_image`, `set_viewport`, `set_scissor`, `reset_state` (noun-verb aliases: `color_set`, `blend_mode_set`, `viewport_set`, … — colocated below their canonicals in painter.odin) |
 | Transform | `push_transform`, `pop_transform`, `translate`, `rotate`, `scale`, `get_matrix`, `set_matrix` |
-| Rect variants | `set_viewport` / `set_scissor` take `(x, y, w, h)` or a `Rect_Vec2i` |
+| | Scoped guard: `if gp.transform_scope() { ... }` |
+| Rect variants | `set_viewport` / `set_scissor` take `(x, y, w, h)` or a `Recti` |
 
 Sizing knobs (`IMAGE_MAX`, `VERTICES_MAX`, …) are `#config` — tune with `-define:IMAGE_MAX=128`.
 

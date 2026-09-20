@@ -45,14 +45,14 @@ create_shader :: proc(desc: ^Shader_Desc) -> Shader {
 
 	if sdl_shader == nil {
 		_set_error(.Create_Shader_Failed)
-		return Shader{id = INVALID_ID}
+		return Shader{INVALID_ID}
 	}
 
 	slot := acquire_pool_slot(_shader_ctx.pool)
 	if slot == POOL_INVALID_SLOT {
 		sdl.ReleaseGPUShader(_shader_ctx.gpu_device, sdl_shader)
 		_set_error(.Create_Shader_Failed)
-		return Shader{id = INVALID_ID}
+		return Shader{INVALID_ID}
 	}
 
 	_shader_ctx.shader[slot] = _Shader{

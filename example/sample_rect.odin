@@ -1,6 +1,7 @@
 package example
 
 import "core:c"
+import "core:log"
 import sdl "vendor:sdl3"
 import gp ".."
 
@@ -9,7 +10,7 @@ image_rect: gp.Image
 sample_rect_setup :: proc () {
 	surface := sdl.LoadSurface(#directory+"../images/hello-world.png")
 	if surface == nil {
-		sdl.Log("Failed to load image: %s", sdl.GetError())
+		log.errorf("Failed to load image: %s", sdl.GetError())
 	}
 
 	image_rect = gp.create_image(surface)
@@ -31,8 +32,7 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 		gp.set_color({10, 10, 10, 255})
 		gp.clear()
 
-		gp.push_transform()
-		{
+		if gp.transform_scope() {
 			gp.set_color({255, 0, 0, 255})
 
 			// Move to the left area of the viewport
@@ -40,9 +40,8 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 
 			half_shape := f32(window.x) * 0.15 // 15% of the viewport width
 
-			gp.draw_rect(gp.Rect_Vec2{{-half_shape,-half_shape},{half_shape*2,half_shape*2}})
+			gp.draw_rect(gp.Rect{{-half_shape, -half_shape}, {half_shape * 2, half_shape * 2}})
 		}
-		gp.pop_transform()
 	}
 
 	// Draw a textured rectangle keeping it's original color.
@@ -60,14 +59,13 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 
 			gp.set_image(0, image_rect)
 
-			width  := gp.get_image_width(image_rect)
-			height := gp.get_image_height(image_rect)
-			size := gp.Vec2{f32(width), f32(height)}
+			size := gp.get_image_size(image_rect)
+			sizef := gp.Vec2{f32(size.x), f32(size.y)}
 
-			scale := size * 2
+			scale := sizef * 2
 
-			gp.draw_textured_rect(0, {
-				src = {{0, 0}, size},
+			gp.draw_textured_rect(0, gp.Textured_Rect{
+				src = {{0, 0}, sizef},
 				dst = {-scale/2, scale},
 			})
 		}
