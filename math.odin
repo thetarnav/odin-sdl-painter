@@ -31,6 +31,10 @@ Recti :: struct {
 Mat  :: matrix[2, 3]f32
 Mat3 :: matrix[3, 3]f32
 
+Region :: struct {
+	min, max: Vec2,
+}
+
 MAT_IDENTITY :: Mat{1, 0, 0, 0, 1, 0}
 
 #assert(size_of(Mat) == 24, "Mat must stay 6 floats (2x3)")

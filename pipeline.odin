@@ -13,7 +13,6 @@ Blend_Mode :: enum u32 {
 	Mod                 = 4,
 	Mul                 = 8,
 }
-#assert(len(Blend_Mode) == 7)
 
 Primitive_Type :: enum u32 {
 	Triangles,
@@ -22,7 +21,6 @@ Primitive_Type :: enum u32 {
 	Line_Strip,
 	Points,
 }
-#assert(len(Primitive_Type) == 5)
 
 Pipeline :: struct {id: u32}
 

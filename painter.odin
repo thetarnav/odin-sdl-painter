@@ -65,10 +65,6 @@ Desc :: struct {
 // Painter (Private)
 // ----------------------------------------------------------------------------
 
-_Region :: struct {
-	min, max: Vec2,
-}
-
 _Command_Type :: enum u32 {
 	None,
 	Draw,
@@ -77,7 +73,7 @@ _Command_Type :: enum u32 {
 }
 
 _Draw_Args :: struct {
-	region:         _Region,
+	region:         Region,
 	pipeline:       Pipeline,
 	texture:        Texture_Uniform,
 	uniform_index:  u32,
@@ -253,7 +249,7 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 
 	// Create common shader
 
-	vert, frag, shaders_ok := _create_common_shaders(desc.gpu_device)
+	vert, frag, shaders_ok := _create_common_shaders(desc.gpu_device, allocator)
 	if !shaders_ok {
 		return false
 	}
@@ -643,7 +639,7 @@ _transform :: proc (m: Mat, dst, src: []Vec2) {
 }
 
 @(private)
-_region_overlaps :: proc (a, b: _Region) -> bool {
+_region_overlaps :: proc (a, b: Region) -> bool {
 	return !(a.max.x <= b.min.x || b.max.x <= a.min.x || a.max.y <= b.min.y || b.max.y <= a.min.y)
 }
 
@@ -652,7 +648,7 @@ _merge_draw_commands :: proc (
 	pipeline:       Pipeline,
 	texture:        Texture_Uniform,
 	uniform:        ^Uniform,
-	region:         _Region,
+	region:         Region,
 	vertex_index:   u32,
 	vertices_count: u32,
 ) -> bool {
@@ -813,7 +809,7 @@ _merge_draw_commands :: proc (
 }
 
 @(private)
-_queue_draw :: proc (pipeline: Pipeline, region: _Region, vertex_index: u32, vertices_count: u32, primitive_type: Primitive_Type) {
+_queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vertices_count: u32, primitive_type: Primitive_Type) {
 	pipeline := pipeline
 	uniform: ^Uniform = nil
 	if _gp.state.pipeline.id != INVALID_ID {
@@ -1406,7 +1402,7 @@ clear :: proc () {
 
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, _Region{-1, 1}, vertex_index, vertices_count, .Triangles)
+	_queue_draw(pipeline, Region{-1, 1}, vertex_index, vertices_count, .Triangles)
 }
 
 // Draw any primitive.
@@ -1440,7 +1436,7 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 		v[i] = {p, vertices[i].texcoord, vertices[i].color}
 	}
 
-	region := _Region{lo, hi}
+	region := Region{lo, hi}
 
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
@@ -1648,7 +1644,7 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 		vertices[i * 6 + 5] = {quad[2], vtexquad[2], color}
 	}
 
-	region := _Region{lo, hi}
+	region := Region{lo, hi}
 
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)

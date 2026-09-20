@@ -2,44 +2,19 @@
 // ----------------------------------------------------------------------------
 package sdl_painter
 
+import "base:runtime"
 import sdl "vendor:sdl3"
 
 Shader :: struct {id: u32}
 
-Shader_Desc :: struct {
-	// Vertex shader description
-	code_size:            uint,
-	code:                 [^]u8,
-	entrypoint:           cstring,
-	stage:                sdl.GPUShaderStage,
-	format:               sdl.GPUShaderFormat,
-	num_samplers:         u32,
-	num_storage_textures: u32,
-	num_storage_buffers:  u32,
-	num_uniform_buffers:  u32,
-}
-
 // Create a shader from vertex and fragment shader descriptions. Returns an
 // invalid shader if creation failed, Use GetLastError() to get more
 // information about the error.
-make_shader :: proc (desc: ^Shader_Desc) -> Shader {
+make_shader :: proc (desc: sdl.GPUShaderCreateInfo) -> Shader {
 	assert(_shader_ctx.initialized)
-	assert(desc != nil)
-
-	create_info := sdl.GPUShaderCreateInfo{
-		code_size            = desc.code_size,
-		code                 = desc.code,
-		entrypoint           = desc.entrypoint,
-		format               = desc.format,
-		stage                = desc.stage,
-		num_samplers         = desc.num_samplers,
-		num_storage_textures = desc.num_storage_textures,
-		num_storage_buffers  = desc.num_storage_buffers,
-		num_uniform_buffers  = desc.num_uniform_buffers,
-	}
 
 	// Create the shader from the bytecode
-	sdl_shader := sdl.CreateGPUShader(_shader_ctx.gpu_device, create_info)
+	sdl_shader := sdl.CreateGPUShader(_shader_ctx.gpu_device, desc)
 
 	if sdl_shader == nil {
 		_set_error(.Create_Shader_Failed)
@@ -53,7 +28,7 @@ make_shader :: proc (desc: ^Shader_Desc) -> Shader {
 		return Shader{INVALID_ID}
 	}
 
-	_shader_ctx.shader[slot] = {sdl_shader}
+	_shader_ctx.shader[slot] = sdl_shader
 
 	return Shader{generate_pool_id(_shader_ctx.pool, slot)}
 }
@@ -66,7 +41,7 @@ get_gpu_shader :: proc (shader: Shader) -> ^sdl.GPUShader {
 	if shader.id == INVALID_ID do return nil
 
 	slot := pool_id_to_slot(shader.id)
-	return _shader_ctx.shader[slot].sdl_shader
+	return _shader_ctx.shader[slot]
 }
 
 // Destroy a shader and free its resources.
@@ -77,9 +52,7 @@ destroy_shader :: proc (shader: Shader) {
 
 	slot := pool_id_to_slot(shader.id)
 
-	inner_shader := _shader_ctx.shader[slot]
-
-	sdl.ReleaseGPUShader(_shader_ctx.gpu_device, inner_shader.sdl_shader)
+	sdl.ReleaseGPUShader(_shader_ctx.gpu_device, _shader_ctx.shader[slot])
 
 	release_pool_slot(_shader_ctx.pool, slot)
 
@@ -92,20 +65,16 @@ destroy_shader :: proc (shader: Shader) {
 // Precompiled painter shaders, selected at runtime by GPU backend.
 // GLSL sources in shaders/*.glsl are reference only — SDL3 CreateGPUShader
 // consumes backend bytecode, never GLSL.
-_vert_spv  := #load("./shaders/painter.vert.spv", []byte)
-_vert_msl  := #load("./shaders/painter.vert.msl", []byte)
+_vert_spv  := #load("./shaders/painter.vert.spv",  []byte)
+_vert_msl  := #load("./shaders/painter.vert.msl",  []byte)
 _vert_dxil := #load("./shaders/painter.vert.dxil", []byte)
-_frag_spv  := #load("./shaders/painter.frag.spv", []byte)
-_frag_msl  := #load("./shaders/painter.frag.msl", []byte)
+_frag_spv  := #load("./shaders/painter.frag.spv",  []byte)
+_frag_msl  := #load("./shaders/painter.frag.msl",  []byte)
 _frag_dxil := #load("./shaders/painter.frag.dxil", []byte)
-
-_Shader :: struct {
-	sdl_shader: ^sdl.GPUShader,
-}
 
 _Shader_Context :: struct {
 	initialized: bool,
-	shader:      []_Shader,
+	shader:      []^sdl.GPUShader,
 	pool:        ^Pool,
 	gpu_device:  ^sdl.GPUDevice,
 }
@@ -121,7 +90,7 @@ _shader_setup :: proc (gpu_device: ^sdl.GPUDevice, allocator := context.allocato
 	_shader_ctx.initialized = true
 	_shader_ctx.gpu_device  = gpu_device
 	_shader_ctx.pool        = new_pool(SHADER_MAX, allocator)
-	_shader_ctx.shader      = make([]_Shader, SHADER_MAX, allocator)
+	_shader_ctx.shader      = make([]^sdl.GPUShader, SHADER_MAX, allocator)
 }
 
 // Shutdown shader resources management and free resources.
@@ -139,7 +108,7 @@ _shader_shutdown :: proc (allocator := context.allocator) {
 // precompiled bytecode matching the GPU backend (SPIRV → MSL → DXIL).
 // Called from painter Setup. On failure the painter is shut down.
 @(private)
-_create_common_shaders :: proc (device: ^sdl.GPUDevice) -> (vert, frag: Shader, ok: bool) {
+_create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Allocator) -> (vert, frag: Shader, ok: bool) {
 	supported_formats := sdl.GetGPUShaderFormats(device)
 
 	format: sdl.GPUShaderFormat
@@ -164,38 +133,34 @@ _create_common_shaders :: proc (device: ^sdl.GPUDevice) -> (vert, frag: Shader, 
 		bytecode_frag = _frag_dxil
 	} else {
 		_set_error(.Create_Common_Shader_Failed)
-		shutdown()
+		shutdown(allocator)
 		return {}, {}, false
 	}
 
-	shader_vert_desc := Shader_Desc{
+	vert = make_shader({
 		code_size  = uint(len(bytecode_vert)),
 		code       = raw_data(bytecode_vert),
 		entrypoint = "main",
 		stage      = .VERTEX,
 		format     = format,
-	}
-
-	vert = make_shader(&shader_vert_desc)
+	})
 
 	if vert.id == INVALID_ID {
-		shutdown()
+		shutdown(allocator)
 		return {}, {}, false
 	}
 
-	shader_frag_desc := Shader_Desc{
+	frag = make_shader({
 		code_size    = uint(len(bytecode_frag)),
 		code         = raw_data(bytecode_frag),
 		entrypoint   = "main",
 		stage        = .FRAGMENT,
 		format       = format,
 		num_samplers = TEXTURE_SLOTS_MAX,
-	}
-
-	frag = make_shader(&shader_frag_desc)
+	})
 
 	if frag.id == INVALID_ID {
-		shutdown()
+		shutdown(allocator)
 		return {}, {}, false
 	}
 
