@@ -243,18 +243,15 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 	_gp.shader_frag = frag
 
 	// Create common pipelines
-
-	is_ok := true
-	is_ok &= _find_or_create_pipeline(.Points,     .None)  != {}
-	is_ok &= _find_or_create_pipeline(.Points,     .Blend) != {}
-	is_ok &= _find_or_create_pipeline(.Lines,      .None)  != {}
-	is_ok &= _find_or_create_pipeline(.Lines,      .Blend) != {}
-	is_ok &= _find_or_create_pipeline(.Line_Strip, .None)  != {}
-	is_ok &= _find_or_create_pipeline(.Line_Strip, .Blend) != {}
-	is_ok &= _find_or_create_pipeline(.Triangles,  .None)  != {}
-	is_ok &= _find_or_create_pipeline(.Triangles,  .Blend) != {}
-
-	if !is_ok {
+	if _find_or_create_pipeline(.Points,     .None)  != {} &&
+	   _find_or_create_pipeline(.Points,     .Blend) != {} &&
+	   _find_or_create_pipeline(.Lines,      .None)  != {} &&
+	   _find_or_create_pipeline(.Lines,      .Blend) != {} &&
+	   _find_or_create_pipeline(.Line_Strip, .None)  != {} &&
+	   _find_or_create_pipeline(.Line_Strip, .Blend) != {} &&
+	   _find_or_create_pipeline(.Triangles,  .None)  != {} &&
+	   _find_or_create_pipeline(.Triangles,  .Blend) != {}
+	{
 		_set_error(.Create_Common_Pipeline_Failed)
 		shutdown()
 		return false
