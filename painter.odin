@@ -884,15 +884,12 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 	v := _next_vertices(vertices_count)
 	if v == nil do return
 
-	thickness: f32 = 1.0
-	if primitive_type == .Points || primitive_type == .Lines || primitive_type == .Line_Strip {
-		thickness = _gp.state.thickness
-	}
+	width := _gp.state.thickness if primitive_type in bit_set[Primitive_Type]{.Points, .Lines, .Line_Strip} else 1.0
 	color := _gp.state.color
-	mvp := _gp.state.mvp
-	lo := Vec2(max(f32))
-	hi := Vec2(-max(f32))
-	pad := Vec2{thickness, thickness}
+	mvp   := _gp.state.mvp
+	lo    := Vec2(max(f32))
+	hi    := Vec2(-max(f32))
+	pad   := Vec2(width)
 
 	for pos, i in vertices {
 		p := transform_point(mvp, pos)
@@ -903,12 +900,10 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 		v[i] = {p, 0, color}
 	}
 
-	region := _Region{lo, hi}
-
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
 	// Queue draw
-	_queue_draw(pipeline, region, vertex_index, vertices_count, primitive_type)
+	_queue_draw(pipeline, {lo, hi}, vertex_index, vertices_count, primitive_type)
 }
 
 // Get the current transform matrix.
@@ -960,8 +955,7 @@ reset_projection :: proc () {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	w := f32(_gp.state.viewport.size.x)
-	h := f32(_gp.state.viewport.size.y)
+	w, h := **Vec2(_gp.state.viewport.size)
 
 	_gp.state.projection = Mat{2 / w, 0, -1, 0, -2 / h, 1}
 
@@ -1105,7 +1099,7 @@ set_uniform :: proc (vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i3
 
 	if old_size > size {
 		// Zero out the rest of the uniform data
-		mem.set(mem.ptr_offset(cast([^]u8)&_gp.state.uniform.data, size), 0, old_size - size)
+		mem.zero(mem.ptr_offset(cast([^]u8)&_gp.state.uniform.data, size), old_size - size)
 	}
 
 	_gp.state.uniform.vs_size = u16(vs_size)
