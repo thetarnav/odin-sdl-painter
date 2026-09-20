@@ -28,8 +28,8 @@ draw_checkboard :: proc (width, height: int) {
 		for x := 0; x < width; x += size {
 			is_white := ((x / size) + (y / size)) % 2 == 0
 			color := is_white ? \
-				sdl.Color{150, 150, 150, 255} : \
-				sdl.Color{50, 50, 50, 255}
+				gp.Color{150, 150, 150, 255} : \
+				gp.Color{50, 50, 50, 255}
 			gp.set_color(color)
 			gp.draw_rect(gp.Rect{{f32(x), f32(y)}, {f32(size), f32(size)}})
 		}

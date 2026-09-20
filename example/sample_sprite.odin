@@ -14,7 +14,7 @@ sample_sprite_setup :: proc () {
 		log.errorf("Failed to load image: %s", sdl.GetError())
 	}
 
-	image_sprite = gp.create_image(surface)
+	image_sprite = gp.make_image(surface)
 
 	sdl.DestroySurface(surface)
 }

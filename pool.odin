@@ -22,9 +22,9 @@ Pool :: struct {
 	free_stack_top: i32, // index of the top of the free queue
 }
 
-// Create a pool with the specified number of slots (not counting the invalid
+// Allocate a pool with the specified number of slots (not counting the invalid
 // slot).
-create_pool :: proc (number_of_slots: int, allocator := context.allocator) -> ^Pool {
+new_pool :: proc (number_of_slots: int, allocator := context.allocator) -> ^Pool {
 	pool := new(Pool, allocator)
 
 	// +1 since slot 0 is reserved for invalid slot
@@ -43,8 +43,8 @@ create_pool :: proc (number_of_slots: int, allocator := context.allocator) -> ^P
 }
 
 // Destroy a pool and free its resources. The allocator must match the one
-// used in create_pool.
-destroy_pool :: proc (pool: ^Pool, allocator := context.allocator) {
+// used in new_pool.
+delete_pool :: proc (pool: ^Pool, allocator := context.allocator) {
 	free(pool.counters, allocator)
 	free(pool.free_stack, allocator)
 	free(pool, allocator)

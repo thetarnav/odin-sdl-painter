@@ -12,24 +12,24 @@ Blend_Mode :: enum u32 {
 	Add_Premultiplied   = 32,
 	Mod                 = 4,
 	Mul                 = 8,
-	Size                = 7,
 }
+#assert(len(Blend_Mode) == 7)
 
 Primitive_Type :: enum u32 {
-	Triangles      = 0,
-	Triangle_Strip = 1,
-	Lines          = 2,
-	Line_Strip     = 3,
-	Points         = 4,
-	Size           = 5,
+	Triangles,
+	Triangle_Strip,
+	Lines,
+	Line_Strip,
+	Points,
 }
+#assert(len(Primitive_Type) == 5)
 
 Pipeline :: struct {id: u32}
 
 // Create a graphics pipeline, Returns an invalid pipeline if creation failed,
 // Use GetLastError() to get more information about the error.
-create_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> Pipeline {
-	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
+make_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> Pipeline {
+	assert(_pipeline_ctx.initialized)
 
 	// Location 0 packs position.xy + texcoord as one FLOAT4 ("coord" in
 	// shaders/painter.vert.glsl); location 1 is the normalized color.
@@ -92,7 +92,7 @@ create_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primi
 
 // Destroy a graphics pipeline and free its resources.
 destroy_pipeline :: proc (pipeline: Pipeline) {
-	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
+	assert(_pipeline_ctx.initialized)
 
 	if pipeline.id == INVALID_ID do return
 
@@ -109,7 +109,7 @@ destroy_pipeline :: proc (pipeline: Pipeline) {
 // Get the GPU graphics pipeline associated with a SDL_gp pipeline. Returns
 // NULL if the pipeline is invalid.
 get_gpu_pipeline :: proc (pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
-	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
+	assert(_pipeline_ctx.initialized)
 
 	if pipeline.id == INVALID_ID do return nil
 
@@ -125,7 +125,7 @@ _Pipeline :: struct {
 }
 
 _Pipeline_Context :: struct {
-	initialized: u32,
+	initialized: bool,
 	pipelines:   []_Pipeline,
 	pool:        ^Pool,
 	gpu_device:  ^sdl.GPUDevice,
@@ -137,26 +137,27 @@ _pipeline_ctx: _Pipeline_Context
 // Setup pipeline resources management.
 @(private)
 _pipeline_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) {
-	assert(_pipeline_ctx.initialized == 0)
+	assert(!_pipeline_ctx.initialized)
 	assert(gpu_device != nil)
 	assert(window != nil)
 
-	_pipeline_ctx.initialized = _INIT_COOKIE
-	_pipeline_ctx.gpu_device = gpu_device
-	_pipeline_ctx.window = window
+	_pipeline_ctx.initialized = true
+	_pipeline_ctx.gpu_device  = gpu_device
+	_pipeline_ctx.window      = window
 
-	_pipeline_ctx.pool = create_pool(PIPELINE_MAX, allocator)
+	_pipeline_ctx.pool = new_pool(PIPELINE_MAX, allocator)
 	_pipeline_ctx.pipelines = make([]_Pipeline, PIPELINE_MAX, allocator)
 }
 
 // Shutdown pipeline resources management and free resources.
 @(private)
 _pipeline_shutdown :: proc (allocator := context.allocator) {
-	assert(_pipeline_ctx.initialized == _INIT_COOKIE)
-	_pipeline_ctx.initialized = 0
+	assert(_pipeline_ctx.initialized)
 
-	destroy_pool(_pipeline_ctx.pool, allocator)
+	delete_pool(_pipeline_ctx.pool, allocator)
 	delete(_pipeline_ctx.pipelines, allocator)
+
+	_pipeline_ctx = {}
 }
 
 @(private)
@@ -212,7 +213,7 @@ _pipeline_blend_state :: proc (blend_mode: Blend_Mode) -> sdl.GPUColorTargetBlen
 		blend.src_alpha_blendfactor = .DST_ALPHA
 		blend.dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA
 		blend.alpha_blend_op        = .ADD
-	case .None, .Size: // default in C covers NONE and any other value
+	case .None: // default in C covers NONE and any other value
 		blend.enable_blend          = false
 		blend.src_color_blendfactor = .ONE
 		blend.dst_color_blendfactor = .ZERO

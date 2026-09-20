@@ -14,19 +14,20 @@ import "core:log"
 import "core:mem"
 
 Sampler :: enum u32 {
-	Point_Clamp  = 0,
-	Point_Wrap   = 1,
-	Linear_Clamp = 2,
-	Linear_Wrap  = 3,
-	Size         = 4,
+	Point_Clamp,
+	Point_Wrap,
+	Linear_Clamp,
+	Linear_Wrap,
 }
+
+#assert(len(Sampler) == 4, "Sampler must stay four entries")
 
 Image :: struct {id: u32}
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
-create_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Image {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
+make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Image {
+	assert(_img_ctx.initialized)
 	assert(_img_ctx.pool != nil)
 	assert(_img_ctx.images_count < IMAGE_MAX, "Increase IMAGE_MAX to create more images")
 	assert(surface != nil)
@@ -125,7 +126,7 @@ create_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> 
 
 // Destroy an image and free its resources.
 destroy_image :: proc (image: Image) {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
+	assert(_img_ctx.initialized)
 
 	// TODO find a way to know if the image was already destroyed
 
@@ -149,7 +150,7 @@ destroy_image :: proc (image: Image) {
 // Get the GPU texture associated with an image. Returns NULL if the image is
 // invalid.
 get_image_gpu_texture :: proc (image: Image) -> ^sdl.GPUTexture {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
+	assert(_img_ctx.initialized)
 
 	if image.id == INVALID_ID {
 		return nil
@@ -161,7 +162,7 @@ get_image_gpu_texture :: proc (image: Image) -> ^sdl.GPUTexture {
 
 // Get the width of an image in pixels. Returns 0 if the image is invalid.
 get_image_width :: proc (image: Image) -> i32 {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
+	assert(_img_ctx.initialized)
 
 	if image.id == INVALID_ID do return 0
 
@@ -171,7 +172,7 @@ get_image_width :: proc (image: Image) -> i32 {
 
 // Get the height of an image in pixels. Returns 0 if the image is invalid.
 get_image_height :: proc (image: Image) -> i32 {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
+	assert(_img_ctx.initialized)
 
 	if image.id == INVALID_ID do return 0
 
@@ -181,7 +182,7 @@ get_image_height :: proc (image: Image) -> i32 {
 
 // Get the size of an image in pixels as a vector. Returns {0, 0} if the image is invalid.
 get_image_size :: proc (image: Image) -> Vec2i {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
+	assert(_img_ctx.initialized)
 
 	if image.id == INVALID_ID do return 0
 
@@ -210,7 +211,7 @@ _Image_Pending :: struct {
 }
 
 _Image_Context :: struct {
-	initialized:                 u32,
+	initialized:                 bool,
 	images:                      []_Image,
 	pending:                     [IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
@@ -228,16 +229,16 @@ _img_ctx: _Image_Context
 // Setup image resources management.
 @(private)
 _image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) -> bool {
-	assert(_img_ctx.initialized == 0)
+	assert(!_img_ctx.initialized)
 	assert(gpu_device != nil)
 
-	_img_ctx.initialized = _INIT_COOKIE
+	_img_ctx.initialized = true
 
 	_img_ctx.gpu_device = gpu_device
 	_img_ctx.window = window
 
 	// + 1 for the white image
-	_img_ctx.pool = create_pool(IMAGE_MAX + 1, allocator)
+	_img_ctx.pool = new_pool(IMAGE_MAX + 1, allocator)
 
 	_img_ctx.images = make([]_Image, IMAGE_MAX + 1, allocator)
 
@@ -259,12 +260,13 @@ _image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator
 // Shutdown image resources management and free resources.
 @(private)
 _image_shutdown :: proc (allocator := context.allocator) {
-	assert(_img_ctx.initialized == _INIT_COOKIE)
-	_img_ctx.initialized = 0
+	assert(_img_ctx.initialized)
 
-	destroy_pool(_img_ctx.pool, allocator)
+	delete_pool(_img_ctx.pool, allocator)
 	delete(_img_ctx.images, allocator)
 	sdl.ReleaseGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
+
+	_img_ctx = {}
 }
 
 // Flush the image to the GPU. This will upload any pending images to the GPU.

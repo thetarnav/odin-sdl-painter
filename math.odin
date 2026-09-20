@@ -10,6 +10,10 @@ Vec2i :: [2]i32
 
 Point :: Vec2
 
+Color :: [4]u8
+
+#assert(size_of(Color) == 4, "Color must stay four bytes (Vertex layout)")
+
 Line :: struct {a, b: Point}
 
 Triangle :: struct {a, b, c: Point}

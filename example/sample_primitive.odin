@@ -76,7 +76,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
 			// Draw a colorful triangle strip
-			colors := [3]sdl.Color{
+			colors := [3]gp.Color{
 				{255, 100, 100, 255},
 				{255, 180, 100, 255},
 				{180, 100, 255, 255},

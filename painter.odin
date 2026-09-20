@@ -13,7 +13,7 @@ Uniform_Slot :: enum u32 {VS, FS}
 Vertex :: struct {
 	position: Vec2,
 	texcoord: Vec2,
-	color:    sdl.Color,
+	color:    Color,
 }
 
 #assert(size_of(Vertex) == 20, "Vertex layout changed, update pipeline vertex description")
@@ -48,7 +48,7 @@ State :: struct {
 	frame_size:   Vec2i,
 	viewport:     Recti,
 	scissor:      Recti,
-	color:        sdl.Color,
+	color:        Color,
 	thickness:    f32,
 	base_uniform: u32,
 	base_vertex:  u32,
@@ -70,10 +70,10 @@ _Region :: struct {
 }
 
 _Command_Type :: enum u32 {
-	None     = 0,
-	Draw     = 1,
-	Viewport = 2,
-	Scissor  = 3,
+	None,
+	Draw,
+	Viewport,
+	Scissor,
 }
 
 _Draw_Args :: struct {
@@ -97,13 +97,13 @@ _Command :: struct {
 }
 
 _Gp :: struct {
-	initialized:            u32,
+	initialized:            bool,
 	desc:                   Desc,
 	vertex_transfer_buffer: ^sdl.GPUTransferBuffer,
 	vertex_data_buffer:     ^sdl.GPUBuffer,
 	shader_vert:            Shader,
 	shader_frag:            Shader,
-	pipelines:              [int(Primitive_Type.Size) * int(Blend_Mode.Size)]Pipeline,
+	pipelines:              [len(Primitive_Type) * len(Blend_Mode)]Pipeline,
 	nearest_samplers:       ^sdl.GPUSampler,
 	white_image:            Image,
 
@@ -119,17 +119,14 @@ _Gp :: struct {
 	// configurable in Desc
 	current_vertex: u32,
 	vertices:       []Vertex,
-	vertices_size:  u32,
 
 	// configurable in Desc
 	current_command: u32,
 	commands:        []_Command,
-	commands_size:   u32,
 
 	// Desc Uniforms stack
 	current_uniform: u32,
 	uniforms:        []Uniform,
-	uniforms_size:   u32,
 }
 
 _gp: _Gp
@@ -147,12 +144,11 @@ BLEND_SLOT := #sparse [Blend_Mode]int{
 	.Mul                 = 4,
 	.Blend_Premultiplied = 5,
 	.Add_Premultiplied   = 6,
-	.Size                = 0,
 }
 
 @(private)
 _pipeline_index :: proc (primitive_type: Primitive_Type, blend_mode: Blend_Mode) -> int {
-	return int(primitive_type) * int(Blend_Mode.Size) + BLEND_SLOT[blend_mode]
+	return int(primitive_type) * len(Blend_Mode) + BLEND_SLOT[blend_mode]
 }
 
 @(private)
@@ -161,7 +157,7 @@ _find_or_create_pipeline :: proc (primitive_type: Primitive_Type, blend_mode: Bl
 	pipeline := _gp.pipelines[index]
 
 	if pipeline.id == INVALID_ID {
-		pipeline = create_pipeline(_gp.shader_vert, _gp.shader_frag, primitive_type, blend_mode)
+		pipeline = make_pipeline(_gp.shader_vert, _gp.shader_frag, primitive_type, blend_mode)
 		_gp.pipelines[index] = pipeline
 	}
 
@@ -171,24 +167,21 @@ _find_or_create_pipeline :: proc (primitive_type: Primitive_Type, blend_mode: Bl
 // Setup painter context. Returns false if setup failed, use get_last_error()
 // to get more information about the error.
 setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
-	assert(_gp.initialized == 0)
+	assert(!_gp.initialized)
 	assert(desc != nil)
 
 	_last_error = .None
 
-	_gp.initialized = _INIT_COOKIE
+	_gp.initialized = true
 
 	_gp.desc.max_vertices = VERTICES_MAX if desc.max_vertices == 0 else desc.max_vertices
 	_gp.desc.max_commands = COMMANDS_MAX if desc.max_commands == 0 else desc.max_commands
 	_gp.desc.window = desc.window
 	_gp.desc.gpu_device = desc.gpu_device
 
-	_gp.vertices_size = _gp.desc.max_vertices
-	_gp.commands_size = _gp.desc.max_commands
-	_gp.uniforms_size = _gp.desc.max_commands
-	_gp.vertices = make([]Vertex,   int(_gp.vertices_size), allocator)
-	_gp.commands = make([]_Command, int(_gp.commands_size), allocator)
-	_gp.uniforms = make([]Uniform,  int(_gp.uniforms_size), allocator)
+	_gp.vertices = make([]Vertex,   int(_gp.desc.max_vertices), allocator)
+	_gp.commands = make([]_Command, int(_gp.desc.max_commands), allocator)
+	_gp.uniforms = make([]Uniform,  int(_gp.desc.max_commands), allocator)
 
 	// Setup resources management for shaders, pipelines and images
 
@@ -216,7 +209,7 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 	}
 	defer sdl.DestroySurface(white_surface)
 
-	_gp.white_image = create_image(white_surface)
+	_gp.white_image = make_image(white_surface)
 	if _gp.white_image.id == INVALID_ID {
 		shutdown()
 		return false
@@ -294,7 +287,7 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 
 // Shutdown painter context.
 shutdown :: proc (allocator := context.allocator) {
-	if _gp.initialized != _INIT_COOKIE {
+	if !_gp.initialized {
 		return
 	}
 
@@ -365,7 +358,7 @@ shutdown :: proc (allocator := context.allocator) {
 // If return false then an error occurred and the frame should be skipped,
 // use get_last_error() to get more information about the error.
 begin :: proc (size: Vec2i) -> bool {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 
 	_gp.states[_gp.current_state] = _gp.state
 	_gp.current_state += 1
@@ -393,7 +386,7 @@ begin :: proc (size: Vec2i) -> bool {
 	_gp.state.frame_size = size
 	_gp.state.viewport   = {0, size}
 	_gp.state.scissor    = {0, {-1, -1}}
-	_gp.state.color      = 255
+	_gp.state.color      = {255, 255, 255, 255}
 
 	_gp.state.thickness    = max(1.0 / w, 1.0 / h)
 	_gp.state.base_vertex  = _gp.current_vertex
@@ -406,7 +399,7 @@ begin :: proc (size: Vec2i) -> bool {
 // Flush the recorded draw calls to the GPU. Returns false if an error
 // occurred, use get_last_error() to get more information about the error.
 flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> bool {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(cmd_buffer != nil)
 	assert(texture != nil)
@@ -582,7 +575,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 // End recording draw calls for the current frame.
 end :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 
 	_gp.current_state -= 1
 	_gp.state = _gp.states[_gp.current_state]
@@ -612,6 +605,11 @@ _prev_uniform :: proc () -> ^Uniform {
 	}
 }
 
+// Frame buffers use a bump slice plus a current index, not dynamic append
+// or a Queue: flush rewinds to base indices on submit, the optimizer does
+// index-based memmove, and a failed _next_* call rolls back by decrementing
+// the index. Growth would invalidate those indices; capacity errors surface
+// as sticky _last_error instead.
 @(private)
 _next_vertices :: proc (count: u32) -> [^]Vertex {
 	if _gp.current_vertex + count <= u32(len(_gp.vertices)) {
@@ -872,14 +870,15 @@ _queue_draw :: proc (pipeline: Pipeline, region: _Region, vertex_index: u32, ver
 }
 
 @(private)
-_draw_solid :: proc (primitive_type: Primitive_Type, vertices: [^]Vec2, vertices_count: u32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+_draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
-	if vertices_count == 0 do return
+	if len(vertices) == 0 do return
 
 	// Setup vertices
 	vertex_index := _gp.current_vertex
+	vertices_count := u32(len(vertices))
 	v := _next_vertices(vertices_count)
 	if v == nil do return
 
@@ -893,11 +892,11 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: [^]Vec2, vertices
 	hi := Vec2(-max(f32))
 	pad := Vec2{thickness, thickness}
 
-	for i in 0 ..< vertices_count {
-		p := transform_point(mvp, vertices[i])
+	for pos, i in vertices {
+		p := transform_point(mvp, pos)
 
 		lo = linalg.min(lo, p - pad)
-		hi = linalg.max(lo, p + pad)
+		hi = linalg.max(hi, p + pad)
 
 		v[i] = {p, 0, color}
 	}
@@ -912,14 +911,14 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: [^]Vec2, vertices
 
 // Get the current transform matrix.
 get_matrix :: proc () -> Mat {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	return _gp.state.transform
 }
 
 // Set the current transform matrix (recomputes the MVP immediately).
 set_matrix :: proc (m: Mat) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	_gp.state.transform = m
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
@@ -942,7 +941,7 @@ mat3_get   :: get_mat3
 
 // Set the coordinate space boundaries in the current viewport.
 set_projection :: proc (left, right, bottom, top: f32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	width := right - left
@@ -956,7 +955,7 @@ set_projection :: proc (left, right, bottom, top: f32) {
 // Reset the projection to the default coordinate space, which is the
 // coordinate of the current viewport.
 reset_projection :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	w := f32(_gp.state.viewport.size.x)
@@ -973,7 +972,7 @@ projection_reset :: reset_projection
 // Save the current transform matrix on the transform stack. To be pop later
 // with pop_transform.
 push_transform :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(_gp.current_transform < TRANSFORMS_MAX)
 
@@ -983,7 +982,7 @@ push_transform :: proc () {
 
 // Restore the transform matrix from the top of the transform stack.
 pop_transform :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(_gp.current_transform > 0)
 
@@ -1010,7 +1009,7 @@ transform_pop   :: pop_transform
 transform_reset :: reset_transform
 
 translate_xy :: proc (x, y: f32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	_gp.state.transform[0, 2] += x * _gp.state.transform[0, 0] + y * _gp.state.transform[0, 1]
 	_gp.state.transform[1, 2] += x * _gp.state.transform[1, 0] + y * _gp.state.transform[1, 1]
@@ -1024,7 +1023,7 @@ translate_vec :: proc (offset: Vec2) {
 translate :: proc{translate_xy, translate_vec}
 
 rotate :: proc (angle: f32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	c := math.cos(angle)
 	s := math.sin(angle)
@@ -1043,7 +1042,7 @@ rotate_at :: proc (angle, ax, ay: f32) {
 }
 
 scale_xy :: proc (sx, sy: f32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	_gp.state.transform[0, 0] *= sx
 	_gp.state.transform[0, 1] *= sy
@@ -1066,7 +1065,7 @@ scale_at :: proc (sx, sy, ax, ay: f32) {
 
 // Set the current graphics pipeline.
 set_pipeline :: proc (pipeline: Pipeline) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 
 	_gp.state.pipeline = pipeline
 
@@ -1076,7 +1075,7 @@ set_pipeline :: proc (pipeline: Pipeline) {
 
 // Reset the graphics pipeline to the default pipeline builtin pipeline.
 reset_pipeline :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 
 	pipeline := Pipeline{INVALID_ID}
 
@@ -1088,7 +1087,7 @@ pipeline_reset :: reset_pipeline
 
 // Set uniform data for the current pipeline.
 set_uniform :: proc (vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.state.pipeline.id != INVALID_ID)
 
 	size := int(vs_size) + int(fs_size)
@@ -1117,7 +1116,7 @@ set_uniform :: proc (vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i3
 
 // Reset uniform data to the default state (current state color).
 reset_uniform :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.state.pipeline.id != INVALID_ID)
 
 	set_uniform(nil, 0, nil, 0)
@@ -1128,7 +1127,7 @@ uniform_reset :: reset_uniform
 
 // Set the current blend mode.
 set_blend_mode :: proc (blend_mode: Blend_Mode) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	_gp.state.blend_mode = blend_mode
@@ -1136,7 +1135,7 @@ set_blend_mode :: proc (blend_mode: Blend_Mode) {
 
 // Reset the current blend mode to the default blend mode (no blending).
 reset_blend_mode :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	_gp.state.blend_mode = .None
@@ -1146,16 +1145,16 @@ blend_mode_set   :: set_blend_mode
 blend_mode_reset :: reset_blend_mode
 
 // Sets current color.
-set_color :: proc (color: sdl.Color) {
-	assert(_gp.initialized == _INIT_COOKIE)
+set_color :: proc (color: Color) {
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	_gp.state.color = color
 }
 
 // Gets current color.
-get_color :: proc () -> sdl.Color {
-	assert(_gp.initialized == _INIT_COOKIE)
+get_color :: proc () -> Color {
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	return _gp.state.color
@@ -1163,10 +1162,10 @@ get_color :: proc () -> sdl.Color {
 
 // Reset current color to the default color (white).
 reset_color :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
-	_gp.state.color = 255
+	_gp.state.color = {255, 255, 255, 255}
 }
 
 color_set   :: set_color
@@ -1175,7 +1174,7 @@ color_reset :: reset_color
 
 // Sets current bound image in a texture channel.
 set_image :: proc (channel: i32, image: Image) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
@@ -1201,7 +1200,7 @@ set_image :: proc (channel: i32, image: Image) {
 // Reset current bound image in a texture channel to the default (white
 // texture).
 reset_image :: proc (channel: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
@@ -1213,7 +1212,7 @@ image_reset :: reset_image
 
 // Remove current bound image from a texture channel (no texture).
 unset_image :: proc (channel: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
@@ -1222,7 +1221,7 @@ unset_image :: proc (channel: i32) {
 
 // Set current bound sampler in a texture channel.
 set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
@@ -1231,7 +1230,7 @@ set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
 
 // Remove current bound sampler from a texture channel (no sampler).
 unset_sampler :: proc (channel: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
@@ -1241,7 +1240,7 @@ unset_sampler :: proc (channel: i32) {
 // Reset current bound sampler in a texture channel to default (nearest
 // sampler).
 reset_sampler :: proc (channel: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
@@ -1253,7 +1252,7 @@ sampler_reset :: reset_sampler
 
 // Set the screen are to draw to.
 set_viewport_xy :: proc (x, y, w, h: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	viewport := Recti{{x, y}, {w, h}}
@@ -1290,7 +1289,7 @@ set_viewport_xy :: proc (x, y, w, h: i32) {
 
 // Set the screen area to draw to from an integer rect (shares the body above).
 set_viewport_rect :: proc (r: Recti) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	set_viewport_xy(r.pos.x, r.pos.y, r.size.x, r.size.y)
@@ -1300,7 +1299,7 @@ set_viewport :: proc{set_viewport_xy, set_viewport_rect}
 
 // Reset the viewport to default (0, 0, width, height).
 reset_viewport :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	set_viewport(0, 0, _gp.state.frame_size.x, _gp.state.frame_size.y)
@@ -1311,7 +1310,7 @@ viewport_reset :: reset_viewport
 
 // Set the clipping rectangle in the viewport.
 set_scissor_xy :: proc (x, y, w, h: i32) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	scissor := Recti{{x, y}, {w, h}}
@@ -1347,7 +1346,7 @@ set_scissor_xy :: proc (x, y, w, h: i32) {
 
 // Set the clipping rectangle from an integer rect (shares the body above).
 set_scissor_rect :: proc (r: Recti) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	set_scissor_xy(r.pos.x, r.pos.y, r.size.x, r.size.y)
@@ -1357,7 +1356,7 @@ set_scissor :: proc{set_scissor_xy, set_scissor_rect}
 
 // Reset the clipping rectangle to default (viewport bounds).
 reset_scissor :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	_gp.state.scissor = Recti{{0, 0}, {-1, -1}}
@@ -1368,7 +1367,7 @@ scissor_reset :: reset_scissor
 
 // Reset all state to default.
 reset_state :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	reset_viewport()
@@ -1385,7 +1384,7 @@ state_reset :: reset_state
 
 // Clear the current viewport with the current color.
 clear :: proc () {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	// Setup vertices
@@ -1424,7 +1423,7 @@ clear :: proc () {
 
 // Draw any primitive.
 draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	if len(vertices) == 0 {
@@ -1469,7 +1468,7 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 
 // Draw points in batch.
 draw_points :: proc (points: []Point) {
-	_draw_solid(.Points, raw_data(points), u32(len(points)))
+	_draw_solid(.Points, points)
 }
 
 // Draw a single point.
@@ -1480,7 +1479,7 @@ draw_point_single :: proc (point: Point) {
 
 // Draw lines in batch.
 draw_lines :: proc (lines: []Line) {
-	_draw_solid(.Lines, cast([^]Vec2)raw_data(lines), u32(len(lines)) * 2)
+	_draw_solid(.Lines, (cast([^]Vec2)raw_data(lines))[:len(lines)*2])
 }
 
 // Draw a single line.
@@ -1491,12 +1490,12 @@ draw_line_single :: proc (line: Line) {
 
 // Draw a stip of lines.
 draw_line_strip :: proc (points: []Vec2) {
-	_draw_solid(.Line_Strip, raw_data(points), u32(len(points)))
+	_draw_solid(.Line_Strip, points)
 }
 
 // Draw triangles in batch.
 draw_triangles :: proc (triangles: []Triangle) {
-	_draw_solid(.Triangles, cast([^]Vec2)raw_data(triangles), u32(len(triangles)) * 3)
+	_draw_solid(.Triangles, (cast([^]Vec2)raw_data(triangles))[:len(triangles)*3])
 }
 
 // Draw a single triangle.
@@ -1507,12 +1506,12 @@ draw_triangle_single :: proc (triangle: Triangle) {
 
 // Draw a strip of triangles.
 draw_triangle_strip :: proc (points: []Vec2) {
-	_draw_solid(.Triangle_Strip, raw_data(points), u32(len(points)))
+	_draw_solid(.Triangle_Strip, points)
 }
 
 // Draw rectangles in batch.
 draw_rects :: proc (rects: []Rect) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 
 	if len(rects) == 0 {
@@ -1616,7 +1615,7 @@ draw_textured_rect_xywh_i :: proc (channel: i32, x, y, w, h: i32, src: Rect) {
 
 // Draw textured rectangles in batch.
 draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
-	assert(_gp.initialized == _INIT_COOKIE)
+	assert(_gp.initialized)
 	assert(_gp.current_state > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 

@@ -56,7 +56,7 @@ Sizing knobs (`IMAGE_MAX`, `VERTICES_MAX`, …) are `#config` — tune with `-de
 
 ## Allocators
 
-`setup`, `shutdown`, `create_pool` / `destroy_pool`, `create_image`, and the internal `_image` / `_pipeline` / `_shader` setup/teardown/flush procs take an `allocator := context.allocator` parameter. Steady-state rendering stays allocation-free; all allocator traffic happens at setup/teardown. A destroy call must use the same allocator as its create call.
+`setup`, `shutdown`, `new_pool` / `delete_pool`, `make_image`, and the internal `_image` / `_pipeline` / `_shader` setup/teardown/flush procs take an `allocator := context.allocator` parameter. Steady-state rendering stays allocation-free; all allocator traffic happens at setup/teardown. A destroy call must use the same allocator as its create call.
 
 ## Shaders
 
