@@ -421,13 +421,13 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	// Nothing to draw
 	if end_command <= base_command do return true
 
-	vertex_data := sdl.MapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer, true)
+	vertex_data := cast([^]Vertex)sdl.MapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer, true)
 	if vertex_data == nil {
 		_set_error(.Flush_Failed)
 		return false
 	}
 
-	mem.copy(vertex_data, &_gp.vertices[base_vertex], vertices_count * size_of(Vertex))
+	copy(vertex_data[:len(_gp.vertices)-base_vertex], _gp.vertices[base_vertex:])
 
 	sdl.UnmapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer)
 
@@ -1077,9 +1077,7 @@ set_pipeline :: proc (pipeline: Pipeline) {
 reset_pipeline :: proc () {
 	assert(_gp.initialized)
 
-	pipeline := Pipeline{INVALID_ID}
-
-	set_pipeline(pipeline)
+	set_pipeline({INVALID_ID})
 }
 
 pipeline_set   :: set_pipeline
@@ -1165,7 +1163,7 @@ reset_color :: proc () {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	_gp.state.color = {255, 255, 255, 255}
+	_gp.state.color = 255
 }
 
 color_set   :: set_color
@@ -1216,7 +1214,7 @@ unset_image :: proc (channel: i32) {
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	set_image(channel, Image{INVALID_ID})
+	set_image(channel, {INVALID_ID})
 }
 
 // Set current bound sampler in a texture channel.
@@ -1225,7 +1223,7 @@ set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	_gp.state.texture.samplers[int(channel)] = sampler
+	_gp.state.texture.samplers[channel] = sampler
 }
 
 // Remove current bound sampler from a texture channel (no sampler).
@@ -1234,7 +1232,7 @@ unset_sampler :: proc (channel: i32) {
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	_gp.state.texture.samplers[int(channel)] = nil
+	_gp.state.texture.samplers[channel] = nil
 }
 
 // Reset current bound sampler in a texture channel to default (nearest
@@ -1244,7 +1242,7 @@ reset_sampler :: proc (channel: i32) {
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	_gp.state.texture.samplers[int(channel)] = _gp.nearest_samplers
+	_gp.state.texture.samplers[channel] = _gp.nearest_samplers
 }
 
 sampler_set   :: set_sampler
@@ -1392,33 +1390,29 @@ clear :: proc () {
 	vertex_index := u32(len(_gp.vertices))
 
 	v := _next_vertices(vertices_count)
-	if v == nil {
-		return
-	}
+	if v == nil do return
 
 	// Compute vertices
 	quad := [4]Vec2{
 		{-1.0, -1.0}, // bottom-left
-		{1.0, -1.0}, // bottom-right
-		{1.0, 1.0}, // top-right
-		{-1.0, 1.0}, // top-left
+		{ 1.0, -1.0}, // bottom-right
+		{ 1.0,  1.0}, // top-right
+		{-1.0,  1.0}, // top-left
 	}
 
-	texcoord := Vec2{0.0, 0.0}
+	texcoord: Vec2
 	color := _gp.state.color
 
-	v[0] = Vertex{position = quad[0], texcoord = texcoord, color = color}
-	v[1] = Vertex{position = quad[1], texcoord = texcoord, color = color}
-	v[2] = Vertex{position = quad[2], texcoord = texcoord, color = color}
-	v[3] = Vertex{position = quad[2], texcoord = texcoord, color = color}
-	v[4] = Vertex{position = quad[3], texcoord = texcoord, color = color}
-	v[5] = Vertex{position = quad[0], texcoord = texcoord, color = color}
-
-	region := _Region{{-1, -1}, {1, 1}}
+	v[0] = {quad[0], texcoord, color}
+	v[1] = {quad[1], texcoord, color}
+	v[2] = {quad[2], texcoord, color}
+	v[3] = {quad[2], texcoord, color}
+	v[4] = {quad[3], texcoord, color}
+	v[5] = {quad[0], texcoord, color}
 
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, region, vertex_index, vertices_count, .Triangles)
+	_queue_draw(pipeline, _Region{-1, 1}, vertex_index, vertices_count, .Triangles)
 }
 
 // Draw any primitive.
@@ -1434,28 +1428,22 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 	// Setup vertices
 	vertex_index := u32(len(_gp.vertices))
 	v := _next_vertices(vertices_count)
-	if v == nil {
-		return
-	}
+	if v == nil do return
 
-	thickness: f32 = 1.0
-	if primitive_type == .Points || primitive_type == .Lines || primitive_type == .Line_Strip {
-		thickness = _gp.state.thickness
-	}
 	mvp := _gp.state.mvp
-	lo := Vec2(max(f32))
-	hi := Vec2(-max(f32))
-	pad := Vec2{thickness, thickness}
+	lo  := Vec2(max(f32))
+	hi  := Vec2(-max(f32))
 
-	for i: u32 = 0; i < vertices_count; i += 1 {
+	width := _gp.state.thickness if primitive_type in bit_set[Primitive_Type]{.Points, .Lines, .Line_Strip} else 1.0
+	pad   := Vec2(width)
+
+	for i in 0 ..< vertices_count {
 		p := transform_point(mvp, vertices[i].position)
 
-		lo = {min(lo.x, p.x - pad.x), min(lo.y, p.y - pad.y)}
-		hi = {max(hi.x, p.x + pad.x), max(hi.y, p.y + pad.y)}
+		lo = linalg.min(lo, p - pad)
+		hi = linalg.max(hi, p + pad)
 
-		v[i].position = p
-		v[i].texcoord = vertices[i].texcoord
-		v[i].color = vertices[i].color
+		v[i] = {p, vertices[i].texcoord, vertices[i].color}
 	}
 
 	region := _Region{lo, hi}
@@ -1473,8 +1461,7 @@ draw_points :: proc (points: []Point) {
 
 // Draw a single point.
 draw_point_single :: proc (point: Point) {
-	p := point
-	draw_points([]Point{p})
+	draw_points({point})
 }
 
 // Draw lines in batch.
@@ -1484,8 +1471,7 @@ draw_lines :: proc (lines: []Line) {
 
 // Draw a single line.
 draw_line_single :: proc (line: Line) {
-	l := line
-	draw_lines([]Line{l})
+	draw_lines({line})
 }
 
 // Draw a stip of lines.
@@ -1500,8 +1486,7 @@ draw_triangles :: proc (triangles: []Triangle) {
 
 // Draw a single triangle.
 draw_triangle_single :: proc (triangle: Triangle) {
-	t := triangle
-	draw_triangles([]Triangle{t})
+	draw_triangles({triangle})
 }
 
 // Draw a strip of triangles.
@@ -1544,8 +1529,8 @@ draw_rects :: proc (rects: []Rect) {
 		_transform(mvp, quad[:], quad[:])
 
 		for q in quad {
-			lo = {min(lo.x, q.x), min(lo.y, q.y)}
-			hi = {max(hi.x, q.x), max(hi.y, q.y)}
+			lo = linalg.min(lo, q)
+			hi = linalg.max(hi, q)
 		}
 
 		texcoords := [4]Vec2{
@@ -1556,27 +1541,23 @@ draw_rects :: proc (rects: []Rect) {
 		}
 
 		// Make two triangles to form the quad
-		o := i * 6
-		v[o + 0] = Vertex{position = quad[0], texcoord = texcoords[0], color = color}
-		v[o + 1] = Vertex{position = quad[1], texcoord = texcoords[1], color = color}
-		v[o + 2] = Vertex{position = quad[2], texcoord = texcoords[2], color = color}
-		v[o + 3] = Vertex{position = quad[3], texcoord = texcoords[3], color = color}
-		v[o + 4] = Vertex{position = quad[0], texcoord = texcoords[0], color = color}
-		v[o + 5] = Vertex{position = quad[2], texcoord = texcoords[2], color = color}
+		v[i * 6 + 0] = {quad[0], texcoords[0], color}
+		v[i * 6 + 1] = {quad[1], texcoords[1], color}
+		v[i * 6 + 2] = {quad[2], texcoords[2], color}
+		v[i * 6 + 3] = {quad[3], texcoords[3], color}
+		v[i * 6 + 4] = {quad[0], texcoords[0], color}
+		v[i * 6 + 5] = {quad[2], texcoords[2], color}
 	}
-
-	region := _Region{lo, hi}
 
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, region, vertex_index, total_vertices, .Triangles)
+	_queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles)
 }
 
 // Draw a single rectangle.
 draw_rect_single :: proc (rect: Rect) {
-	r := rect
-	draw_rects({r})
+	draw_rects({rect})
 }
 
 // Draw a single rectangle from position + size vectors.
@@ -1627,9 +1608,7 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
 	vertex_index := u32(len(_gp.vertices))
 	vertices := _next_vertices(total_vertices)
-	if vertices == nil {
-		return
-	}
+	if vertices == nil do return
 
 	// Get image info
 	image := _gp.state.texture.images[int(channel)]
@@ -1653,8 +1632,8 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 		_transform(mvp, quad[:], quad[:])
 
 		for q in quad {
-			lo = {min(lo.x, q.x), min(lo.y, q.y)}
-			hi = {max(hi.x, q.x), max(hi.y, q.y)}
+			lo = linalg.min(lo, q)
+			hi = linalg.max(hi, q)
 		}
 
 		uv0 := rects[i].src.pos * uv_scale
@@ -1667,13 +1646,12 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 			uv0,            // top-left
 		}
 
-		v := cast([^]Vertex)&vertices[i * 6]
-		v[0] = {quad[0], vtexquad[0], color}
-		v[1] = {quad[1], vtexquad[1], color}
-		v[2] = {quad[2], vtexquad[2], color}
-		v[3] = {quad[3], vtexquad[3], color}
-		v[4] = {quad[0], vtexquad[0], color}
-		v[5] = {quad[2], vtexquad[2], color}
+		vertices[i * 6 + 0] = {quad[0], vtexquad[0], color}
+		vertices[i * 6 + 1] = {quad[1], vtexquad[1], color}
+		vertices[i * 6 + 2] = {quad[2], vtexquad[2], color}
+		vertices[i * 6 + 3] = {quad[3], vtexquad[3], color}
+		vertices[i * 6 + 4] = {quad[0], vtexquad[0], color}
+		vertices[i * 6 + 5] = {quad[2], vtexquad[2], color}
 	}
 
 	region := _Region{lo, hi}
@@ -1686,8 +1664,7 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 
 // Draw a single textured rectangle.
 draw_textured_rect_single :: proc (channel: i32, rect: Textured_Rect) {
-	r := rect
-	draw_textured_rects(channel, {r})
+	draw_textured_rects(channel, {rect})
 }
 
 // Draw a single integer rect (converts once, shares the float queue path).
