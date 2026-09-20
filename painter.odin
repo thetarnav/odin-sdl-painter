@@ -955,13 +955,9 @@ set_mat3 :: proc(m: Mat3) {
 	set_matrix(from_mat3(m))
 }
 
-// Alias (see canonical above).
 matrix_set :: set_matrix
-// Alias (see canonical above).
 matrix_get :: get_matrix
-// Alias (see canonical above).
 mat3_set   :: set_mat3
-// Alias (see canonical above).
 mat3_get   :: get_mat3
 
 // Set the coordinate space boundaries in the current viewport.
@@ -991,9 +987,7 @@ reset_projection :: proc() {
 	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
 }
 
-// Alias (see canonical above).
 projection_set   :: set_projection
-// Alias (see canonical above).
 projection_reset :: reset_projection
 
 // Save the current transform matrix on the transform stack. To be pop later
@@ -1019,9 +1013,7 @@ pop_transform :: proc() {
 }
 
 // Scoped transform guard: pushes and auto-pops at scope end, safe on early return.
-// Usage: if transform_scope() { ... }
-// (Deferred-procedure association: @(deferred_none=...) lives on this declaration,
-// so the pop runs at the end of the caller's if-block scope, even on early return.)
+// Usage: if transform_scope() {...}
 @(deferred_none=pop_transform)
 transform_scope :: proc() -> bool {
 	push_transform()
@@ -1033,11 +1025,8 @@ reset_transform :: proc() {
 	set_matrix(MAT_IDENTITY)
 }
 
-// Alias (see canonical above).
 transform_push  :: push_transform
-// Alias (see canonical above).
 transform_pop   :: pop_transform
-// Alias (see canonical above).
 transform_reset :: reset_transform
 
 translate_xy :: proc(x, y: f32) {
@@ -1114,9 +1103,7 @@ reset_pipeline :: proc() {
 	set_pipeline(pipeline)
 }
 
-// Alias (see canonical above).
 pipeline_set   :: set_pipeline
-// Alias (see canonical above).
 pipeline_reset :: reset_pipeline
 
 // Set uniform data for the current pipeline.
@@ -1156,9 +1143,7 @@ reset_uniform :: proc() {
 	set_uniform(nil, 0, nil, 0)
 }
 
-// Alias (see canonical above).
 uniform_set   :: set_uniform
-// Alias (see canonical above).
 uniform_reset :: reset_uniform
 
 // Set the current blend mode.
@@ -1177,9 +1162,7 @@ reset_blend_mode :: proc() {
 	_gp.state.blend_mode = .None
 }
 
-// Alias (see canonical above).
 blend_mode_set   :: set_blend_mode
-// Alias (see canonical above).
 blend_mode_reset :: reset_blend_mode
 
 // Sets current color.
@@ -1206,11 +1189,8 @@ reset_color :: proc() {
 	_gp.state.color = sdl.Color{255, 255, 255, 255}
 }
 
-// Alias (see canonical above).
 color_set   :: set_color
-// Alias (see canonical above).
 color_get   :: get_color
-// Alias (see canonical above).
 color_reset :: reset_color
 
 // Sets current bound image in a texture channel.
@@ -1248,9 +1228,7 @@ reset_image :: proc(channel: i32) {
 	set_image(channel, _gp.white_image)
 }
 
-// Alias (see canonical above).
 image_set   :: set_image
-// Alias (see canonical above).
 image_reset :: reset_image
 
 // Remove current bound image from a texture channel (no texture).
@@ -1290,9 +1268,7 @@ reset_sampler :: proc(channel: i32) {
 	_gp.state.texture.samplers[int(channel)] = _gp.nearest_samplers
 }
 
-// Alias (see canonical above).
 sampler_set   :: set_sampler
-// Alias (see canonical above).
 sampler_reset :: reset_sampler
 
 // Set the screen are to draw to.
@@ -1350,9 +1326,7 @@ reset_viewport :: proc() {
 	set_viewport(0, 0, _gp.state.frame_size.x, _gp.state.frame_size.y)
 }
 
-// Alias (see canonical above).
 viewport_set   :: set_viewport
-// Alias (see canonical above).
 viewport_reset :: reset_viewport
 
 // Set the clipping rectangle in the viewport.
@@ -1409,9 +1383,7 @@ reset_scissor :: proc() {
 	_gp.state.scissor = Recti{{0, 0}, {-1, -1}}
 }
 
-// Alias (see canonical above).
 scissor_set   :: set_scissor
-// Alias (see canonical above).
 scissor_reset :: reset_scissor
 
 // Reset all state to default.
@@ -1429,7 +1401,6 @@ reset_state :: proc() {
 	reset_pipeline()
 }
 
-// Alias (see canonical above).
 state_reset :: reset_state
 
 // Clear the current viewport with the current color.
