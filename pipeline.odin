@@ -3,6 +3,7 @@
 package sdl_painter
 
 import sdl "vendor:sdl3"
+import hm "core:container/handle_map"
 
 Blend_Mode :: enum u32 {
 	None,
@@ -77,15 +78,14 @@ make_pipeline :: proc (shader_vert, shader_frag: Shader, primitive_type: Primiti
 		return Pipeline{INVALID_ID}
 	}
 
-	slot := acquire_pool_slot(_pipeline_ctx.pool)
-	if slot == POOL_INVALID_SLOT {
+	handle, ok := hm.add(&_pipeline_ctx.pipelines, _Pipeline{pipeline = pipeline})
+	if !ok {
+		sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, pipeline)
 		_set_error(.Create_Pipeline_Failed)
 		return Pipeline{INVALID_ID}
 	}
 
-	_pipeline_ctx.pipelines[slot] = {pipeline}
-
-	return Pipeline{id = generate_pool_id(_pipeline_ctx.pool, slot)}
+	return Pipeline{id = _id_from_handle(handle)}
 }
 
 // Destroy a graphics pipeline and free its resources.
@@ -94,14 +94,13 @@ destroy_pipeline :: proc (pipeline: Pipeline) {
 
 	if pipeline.id == INVALID_ID do return
 
-	slot := pool_id_to_slot(pipeline.id)
+	handle := _handle_from_id(pipeline.id)
 
-	inner_pipeline := _pipeline_ctx.pipelines[slot].pipeline
-	sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, inner_pipeline)
+	rec, ok := hm.get(&_pipeline_ctx.pipelines, handle)
+	if !ok do return // stale or foreign id: safe no-op, never aliases a live pipeline
 
-	release_pool_slot(_pipeline_ctx.pool, slot)
-
-	_pipeline_ctx.pipelines[slot] = {}
+	sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, rec.pipeline)
+	hm.remove(&_pipeline_ctx.pipelines, handle)
 }
 
 // Get the GPU graphics pipeline associated with a SDL_gp pipeline. Returns
@@ -111,21 +110,22 @@ get_gpu_pipeline :: proc (pipeline: Pipeline) -> ^sdl.GPUGraphicsPipeline {
 
 	if pipeline.id == INVALID_ID do return nil
 
-	slot := pool_id_to_slot(pipeline.id)
-	return _pipeline_ctx.pipelines[slot].pipeline
+	rec, ok := hm.get(&_pipeline_ctx.pipelines, _handle_from_id(pipeline.id))
+	if !ok do return nil
+	return rec.pipeline
 }
 
 // Pipeline (Private)
 // ----------------------------------------------------------------------------
 
 _Pipeline :: struct {
+	handle:   hm.Handle32,
 	pipeline: ^sdl.GPUGraphicsPipeline,
 }
 
 _Pipeline_Context :: struct {
 	initialized: bool,
-	pipelines:   []_Pipeline,
-	pool:        ^Pool,
+	pipelines:   hm.Static_Handle_Map(PIPELINE_MAX, _Pipeline, hm.Handle32),
 	gpu_device:  ^sdl.GPUDevice,
 	window:      ^sdl.Window,
 }
@@ -134,7 +134,7 @@ _pipeline_ctx: _Pipeline_Context
 
 // Setup pipeline resources management.
 @(private)
-_pipeline_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) {
+_pipeline_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) {
 	assert(!_pipeline_ctx.initialized)
 	assert(gpu_device != nil)
 	assert(window != nil)
@@ -142,18 +142,20 @@ _pipeline_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, alloca
 	_pipeline_ctx.initialized = true
 	_pipeline_ctx.gpu_device  = gpu_device
 	_pipeline_ctx.window      = window
-
-	_pipeline_ctx.pool = new_pool(PIPELINE_MAX, allocator)
-	_pipeline_ctx.pipelines = make([]_Pipeline, PIPELINE_MAX, allocator)
+	_pipeline_ctx.pipelines   = {}
 }
 
 // Shutdown pipeline resources management and free resources.
 @(private)
-_pipeline_shutdown :: proc (allocator := context.allocator) {
+_pipeline_shutdown :: proc () {
 	assert(_pipeline_ctx.initialized)
 
-	delete_pool(_pipeline_ctx.pool, allocator)
-	delete(_pipeline_ctx.pipelines, allocator)
+	it := hm.iterator_make(&_pipeline_ctx.pipelines)
+	for {
+		rec, _, ok := hm.iterate(&it)
+		if !ok do break
+		sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, rec.pipeline)
+	}
 
 	_pipeline_ctx = {}
 }

@@ -4,6 +4,7 @@ package sdl_painter
 
 import "base:runtime"
 import sdl "vendor:sdl3"
+import hm "core:container/handle_map"
 
 Shader :: struct {id: u32}
 
@@ -21,16 +22,14 @@ make_shader :: proc (desc: sdl.GPUShaderCreateInfo) -> Shader {
 		return Shader{INVALID_ID}
 	}
 
-	slot := acquire_pool_slot(_shader_ctx.pool)
-	if slot == POOL_INVALID_SLOT {
+	handle, ok := hm.add(&_shader_ctx.shaders, _Shader{shader = sdl_shader})
+	if !ok {
 		sdl.ReleaseGPUShader(_shader_ctx.gpu_device, sdl_shader)
 		_set_error(.Create_Shader_Failed)
 		return Shader{INVALID_ID}
 	}
 
-	_shader_ctx.shader[slot] = sdl_shader
-
-	return Shader{generate_pool_id(_shader_ctx.pool, slot)}
+	return Shader{id = _id_from_handle(handle)}
 }
 
 // Get the SDL shader associated with a SDL_gp shader. Returns NULL if the
@@ -40,8 +39,9 @@ get_gpu_shader :: proc (shader: Shader) -> ^sdl.GPUShader {
 
 	if shader.id == INVALID_ID do return nil
 
-	slot := pool_id_to_slot(shader.id)
-	return _shader_ctx.shader[slot]
+	rec, ok := hm.get(&_shader_ctx.shaders, _handle_from_id(shader.id))
+	if !ok do return nil
+	return rec.shader
 }
 
 // Destroy a shader and free its resources.
@@ -50,13 +50,13 @@ destroy_shader :: proc (shader: Shader) {
 
 	if shader.id == INVALID_ID do return
 
-	slot := pool_id_to_slot(shader.id)
+	handle := _handle_from_id(shader.id)
 
-	sdl.ReleaseGPUShader(_shader_ctx.gpu_device, _shader_ctx.shader[slot])
+	rec, ok := hm.get(&_shader_ctx.shaders, handle)
+	if !ok do return // stale or foreign id: safe no-op
 
-	release_pool_slot(_shader_ctx.pool, slot)
-
-	_shader_ctx.shader[slot] = {}
+	sdl.ReleaseGPUShader(_shader_ctx.gpu_device, rec.shader)
+	hm.remove(&_shader_ctx.shaders, handle)
 }
 
 // Shader (Private)
@@ -72,10 +72,14 @@ _frag_spv  := #load("./shaders/painter.frag.spv",  []byte)
 _frag_msl  := #load("./shaders/painter.frag.msl",  []byte)
 _frag_dxil := #load("./shaders/painter.frag.dxil", []byte)
 
+_Shader :: struct {
+	handle: hm.Handle32,
+	shader: ^sdl.GPUShader,
+}
+
 _Shader_Context :: struct {
 	initialized: bool,
-	shader:      []^sdl.GPUShader,
-	pool:        ^Pool,
+	shaders:     hm.Static_Handle_Map(SHADER_MAX, _Shader, hm.Handle32),
 	gpu_device:  ^sdl.GPUDevice,
 }
 
@@ -83,23 +87,26 @@ _shader_ctx: _Shader_Context
 
 // Setup shader resources management.
 @(private)
-_shader_setup :: proc (gpu_device: ^sdl.GPUDevice, allocator := context.allocator) {
+_shader_setup :: proc (gpu_device: ^sdl.GPUDevice) {
 	assert(!_shader_ctx.initialized)
 	assert(gpu_device != nil)
 
 	_shader_ctx.initialized = true
 	_shader_ctx.gpu_device  = gpu_device
-	_shader_ctx.pool        = new_pool(SHADER_MAX, allocator)
-	_shader_ctx.shader      = make([]^sdl.GPUShader, SHADER_MAX, allocator)
+	_shader_ctx.shaders     = {}
 }
 
 // Shutdown shader resources management and free resources.
 @(private)
-_shader_shutdown :: proc (allocator := context.allocator) {
+_shader_shutdown :: proc () {
 	assert(_shader_ctx.initialized)
 
-	delete_pool(_shader_ctx.pool, allocator)
-	delete(_shader_ctx.shader, allocator)
+	it := hm.iterator_make(&_shader_ctx.shaders)
+	for {
+		rec, _, ok := hm.iterate(&it)
+		if !ok do break
+		sdl.ReleaseGPUShader(_shader_ctx.gpu_device, rec.shader)
+	}
 
 	_shader_ctx = {}
 }

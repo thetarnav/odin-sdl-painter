@@ -13,6 +13,7 @@ import sdl "vendor:sdl3"
 import "base:builtin"
 import "core:log"
 import "core:mem"
+import hm "core:container/handle_map"
 
 Sampler :: enum u32 {
 	Point_Clamp,
@@ -29,8 +30,6 @@ Image :: struct {id: u32}
 // failed, use GetLastError() to get more information about the error.
 make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Image {
 	assert(_img_ctx.initialized)
-	assert(_img_ctx.pool != nil)
-	assert(_img_ctx.images_count < IMAGE_MAX, "Increase IMAGE_MAX to create more images")
 	assert(surface != nil)
 
 	inner_surface := surface
@@ -79,19 +78,17 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 		return Image{INVALID_ID}
 	}
 
-	// Allocate image from resource
+	// Insert image record into the map; exhaustion keeps the sticky-error contract.
 
-	slot := acquire_pool_slot(_img_ctx.pool)
-	if slot == POOL_INVALID_SLOT {
-		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
-		_set_error(.Create_Image_Failed)
-		return Image{INVALID_ID}
-	}
-
-	_img_ctx.images[slot] = _Image{
+	handle, ok := hm.add(&_img_ctx.images, _Image{
 		texture = texture,
 		width   = u32(inner_surface.w),
 		height  = u32(inner_surface.h),
+	})
+	if !ok {
+		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
+		_set_error(.Create_Image_Failed)
+		return Image{INVALID_ID}
 	}
 
 	// Create a pending image to be flushed later
@@ -103,7 +100,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 	pixels_copy, alloc_err := mem.alloc(int(size), allocator = allocator)
 	if alloc_err != .None || pixels_copy == nil {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
-		release_pool_slot(_img_ctx.pool, slot)
+		hm.remove(&_img_ctx.images, handle)
 		_set_error(.Create_Image_Failed)
 		return Image{INVALID_ID}
 	}
@@ -114,38 +111,30 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 		pixels = pixels_copy,
 		width  = u32(inner_surface.w),
 		height = u32(inner_surface.h),
-		slot   = slot,
+		handle = handle,
 		bpp    = bpp,
 	})
 
 	// Destroy the converted surface if we created one
 
-	_img_ctx.images_count += 1
-
-	return Image{id = generate_pool_id(_img_ctx.pool, slot)}
+	return Image{id = _id_from_handle(handle)}
 }
 
 // Destroy an image and free its resources.
 destroy_image :: proc (image: Image) {
 	assert(_img_ctx.initialized)
 
-	// TODO find a way to know if the image was already destroyed
-
 	if image.id == INVALID_ID {
 		return
 	}
 
-	slot := pool_id_to_slot(image.id)
-	release_pool_slot(_img_ctx.pool, slot)
+	handle := _handle_from_id(image.id)
 
-	inner_image := _img_ctx.images[slot]
-	sdl.ReleaseGPUTexture(_img_ctx.gpu_device, inner_image.texture)
+	rec, ok := hm.get(&_img_ctx.images, handle)
+	if !ok do return // already destroyed or foreign id: safe no-op
 
-	_img_ctx.images[slot] = _Image{
-		texture = nil,
-		width   = 0,
-		height  = 0,
-	}
+	sdl.ReleaseGPUTexture(_img_ctx.gpu_device, rec.texture)
+	hm.remove(&_img_ctx.images, handle)
 }
 
 // Get the GPU texture associated with an image. Returns NULL if the image is
@@ -157,8 +146,9 @@ get_image_gpu_texture :: proc (image: Image) -> ^sdl.GPUTexture {
 		return nil
 	}
 
-	slot := pool_id_to_slot(image.id)
-	return _img_ctx.images[slot].texture
+	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
+	if !ok do return nil
+	return rec.texture
 }
 
 // Get the width of an image in pixels. Returns 0 if the image is invalid.
@@ -167,8 +157,9 @@ get_image_width :: proc (image: Image) -> i32 {
 
 	if image.id == INVALID_ID do return 0
 
-	slot := pool_id_to_slot(image.id)
-	return i32(_img_ctx.images[slot].width)
+	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
+	if !ok do return 0
+	return i32(rec.width)
 }
 
 // Get the height of an image in pixels. Returns 0 if the image is invalid.
@@ -177,8 +168,9 @@ get_image_height :: proc (image: Image) -> i32 {
 
 	if image.id == INVALID_ID do return 0
 
-	slot := pool_id_to_slot(image.id)
-	return i32(_img_ctx.images[slot].height)
+	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
+	if !ok do return 0
+	return i32(rec.height)
 }
 
 // Get the size of an image in pixels as a vector. Returns {0, 0} if the image is invalid.
@@ -187,8 +179,9 @@ get_image_size :: proc (image: Image) -> Vec2i {
 
 	if image.id == INVALID_ID do return 0
 
-	slot := pool_id_to_slot(image.id)
-	return {i32(_img_ctx.images[slot].width), i32(_img_ctx.images[slot].height)}
+	rec, ok := hm.get(&_img_ctx.images, _handle_from_id(image.id))
+	if !ok do return 0
+	return {i32(rec.width), i32(rec.height)}
 }
 
 // Discoverability alias for the size query; canonical form is get_image_size.
@@ -198,6 +191,7 @@ image_size :: get_image_size
 // ----------------------------------------------------------------------------
 
 _Image :: struct {
+	handle:  hm.Handle32, // required by Static_Handle_Map; overwritten by hm.add
 	texture: ^sdl.GPUTexture,
 	width:   u32,
 	height:  u32,
@@ -207,28 +201,26 @@ _Image_Pending :: struct {
 	pixels: rawptr,
 	width:  u32,
 	height: u32,
-	slot:   i32,
+	handle: hm.Handle32, // map handle, resolved via hm.get at flush time
 	bpp:    u8,
 }
 
 _Image_Context :: struct {
 	initialized:                 bool,
-	images:                      []_Image,
+	images:                      hm.Static_Handle_Map(IMAGE_MAX + 1, _Image, hm.Handle32), // +1 white slot
 	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
-	pool:                        ^Pool,
 	texture_transfer_buffer:     ^sdl.GPUTransferBuffer,
 	texture_transfer_buffer_size: uint,
 	gpu_device:                  ^sdl.GPUDevice,
 	window:                      ^sdl.Window,
-	images_count:                uint,
 }
 
 _img_ctx: _Image_Context
 
 // Setup image resources management.
 @(private)
-_image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator := context.allocator) -> bool {
+_image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 	assert(!_img_ctx.initialized)
 	assert(gpu_device != nil)
 
@@ -236,11 +228,7 @@ _image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator
 
 	_img_ctx.gpu_device = gpu_device
 	_img_ctx.window = window
-
-	// + 1 for the white image
-	_img_ctx.pool = new_pool(IMAGE_MAX + 1, allocator)
-
-	_img_ctx.images = make([]_Image, IMAGE_MAX + 1, allocator)
+	_img_ctx.images = {}
 
 	transfer_buffer_create_info := sdl.GPUTransferBufferCreateInfo{
 		usage = .UPLOAD,
@@ -259,11 +247,16 @@ _image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator
 
 // Shutdown image resources management and free resources.
 @(private)
-_image_shutdown :: proc (allocator := context.allocator) {
+_image_shutdown :: proc () {
 	assert(_img_ctx.initialized)
 
-	delete_pool(_img_ctx.pool, allocator)
-	delete(_img_ctx.images, allocator)
+	it := hm.iterator_make(&_img_ctx.images)
+	for {
+		rec, _, ok := hm.iterate(&it)
+		if !ok do break
+		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, rec.texture)
+	}
+
 	sdl.ReleaseGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
 
 	_img_ctx = {}
@@ -328,6 +321,14 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 	for &pending in _img_ctx.pending {
 		size := u32(pending.width) * u32(pending.height) * u32(pending.bpp)
 
+		rec, ok := hm.get(&_img_ctx.images, pending.handle)
+		if !ok {
+			// Destroyed before flush: drop staging pixels, skip upload.
+			mem.free(pending.pixels, allocator)
+			pending.pixels = nil
+			continue
+		}
+
 		mem.copy(mem.ptr_offset(cast([^]u8)texture_transfer_ptr, int(offset)), pending.pixels, int(size))
 
 		transfer_info := sdl.GPUTextureTransferInfo{
@@ -336,7 +337,7 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 		}
 
 		region := sdl.GPUTextureRegion{
-			texture = _img_ctx.images[pending.slot].texture,
+			texture = rec.texture,
 			w       = pending.width,
 			h       = pending.height,
 			d       = 1,

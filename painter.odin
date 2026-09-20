@@ -162,9 +162,9 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 
 	// Setup resources management for shaders, pipelines and images
 
-	_shader_setup(_gp.desc.gpu_device, allocator)
-	_pipeline_setup(_gp.desc.gpu_device, _gp.desc.window, allocator)
-	if !_image_setup(_gp.desc.gpu_device, _gp.desc.window, allocator) {
+	_shader_setup(_gp.desc.gpu_device)
+	_pipeline_setup(_gp.desc.gpu_device, _gp.desc.window)
+	if !_image_setup(_gp.desc.gpu_device, _gp.desc.window) {
 		shutdown()
 		return false
 	}
@@ -318,9 +318,9 @@ shutdown :: proc (allocator := context.allocator) {
 	}
 
 	// Shutdown resources management for shaders, pipelines and images
-	_image_shutdown(allocator)
-	_pipeline_shutdown(allocator)
-	_shader_shutdown(allocator)
+	_image_shutdown()
+	_pipeline_shutdown()
+	_shader_shutdown()
 
 	delete(_gp.uniforms)
 	delete(_gp.commands)
