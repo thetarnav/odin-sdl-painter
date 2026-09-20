@@ -50,9 +50,9 @@ State :: struct {
 	scissor:      Recti,
 	color:        Color,
 	thickness:    f32,
-	base_uniform: u32,
-	base_vertex:  u32,
-	base_command: u32,
+	base_uniform: int,
+	base_vertex:  int,
+	base_command: int,
 }
 
 Desc :: struct {
@@ -114,17 +114,15 @@ _Gp :: struct {
 	// Transforms stack
 	transforms: [dynamic; TRANSFORMS_MAX]Mat,
 
-	// configurable in Desc
-	current_vertex: u32,
-	vertices:       []Vertex,
+	// configurable in Desc — never-grow dynamic buffers, preallocated at setup.
+	// Used == len(), capacity == cap(); frame rollback == resize shrink.
+	vertices: [dynamic]Vertex,
 
 	// configurable in Desc
-	current_command: u32,
-	commands:        []_Command,
+	commands: [dynamic]_Command,
 
 	// Desc Uniforms stack
-	current_uniform: u32,
-	uniforms:        []Uniform,
+	uniforms: [dynamic]Uniform,
 }
 
 _gp: _Gp
@@ -177,9 +175,9 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 	_gp.desc.window = desc.window
 	_gp.desc.gpu_device = desc.gpu_device
 
-	_gp.vertices = make([]Vertex,   int(_gp.desc.max_vertices), allocator)
-	_gp.commands = make([]_Command, int(_gp.desc.max_commands), allocator)
-	_gp.uniforms = make([]Uniform,  int(_gp.desc.max_commands), allocator)
+	_gp.vertices = make([dynamic]Vertex,   0, int(_gp.desc.max_vertices), allocator)
+	_gp.commands = make([dynamic]_Command, 0, int(_gp.desc.max_commands), allocator)
+	_gp.uniforms = make([dynamic]Uniform,  0, int(_gp.desc.max_commands), allocator)
 
 	// Setup resources management for shaders, pipelines and images
 
@@ -343,9 +341,9 @@ shutdown :: proc (allocator := context.allocator) {
 	_pipeline_shutdown(allocator)
 	_shader_shutdown(allocator)
 
-	delete(_gp.uniforms, allocator)
-	delete(_gp.commands, allocator)
-	delete(_gp.vertices, allocator)
+	delete(_gp.uniforms)
+	delete(_gp.commands)
+	delete(_gp.vertices)
 
 	_gp = {}
 }
@@ -387,9 +385,9 @@ begin :: proc (size: Vec2i) -> bool {
 	_gp.state.color      = {255, 255, 255, 255}
 
 	_gp.state.thickness    = max(1.0 / w, 1.0 / h)
-	_gp.state.base_vertex  = _gp.current_vertex
-	_gp.state.base_uniform = _gp.current_uniform
-	_gp.state.base_command = _gp.current_command
+	_gp.state.base_vertex  = len(_gp.vertices)
+	_gp.state.base_uniform = len(_gp.uniforms)
+	_gp.state.base_command = len(_gp.commands)
 
 	return true
 }
@@ -404,21 +402,24 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 	_image_flush(cmd_buffer)
 
-	end_command := _gp.current_command
-	end_vertex := _gp.current_vertex
+	base_command := _gp.state.base_command
+	base_uniform := _gp.state.base_uniform
+	base_vertex  := _gp.state.base_vertex
+	end_command  := len(_gp.commands)
+	end_vertex   := len(_gp.vertices)
 
-	vertices_count := end_vertex - _gp.state.base_vertex // Number of vertices to draw
+	vertices_count := end_vertex - base_vertex // Number of vertices to draw
 
-	// Rewind Index
-	_gp.current_command = _gp.state.base_command
-	_gp.current_uniform = _gp.state.base_uniform
-	_gp.current_vertex = _gp.state.base_vertex
+	// NOTE: rewind to base lengths happens only after the upload + render
+	// loop below completes, so all pointers and indices stay valid for the
+	// whole pass. On early return the arrays stay extended (data preserved
+	// for diagnosis); the next begin() re-captures base from len().
 
 	// Error, Nothing to draw
 	if _last_error != .None do return false
 
 	// Nothing to draw
-	if end_command <= _gp.state.base_command do return true
+	if end_command <= base_command do return true
 
 	vertex_data := sdl.MapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer, true)
 	if vertex_data == nil {
@@ -426,7 +427,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 		return false
 	}
 
-	mem.copy(vertex_data, &_gp.vertices[_gp.state.base_vertex], int(vertices_count) * size_of(Vertex))
+	mem.copy(vertex_data, &_gp.vertices[base_vertex], vertices_count * size_of(Vertex))
 
 	sdl.UnmapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer)
 
@@ -442,8 +443,8 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 	vertex_buffer_region := sdl.GPUBufferRegion{
 		buffer = _gp.vertex_data_buffer,
-		offset = _gp.state.base_vertex * u32(size_of(Vertex)),
-		size   = vertices_count * u32(size_of(Vertex)),
+		offset = u32(base_vertex) * u32(size_of(Vertex)),
+		size   = u32(vertices_count) * u32(size_of(Vertex)),
 	}
 
 	sdl.UploadToGPUBuffer(copy_pass, vertex_transfer_location, vertex_buffer_region, true)
@@ -471,7 +472,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	}
 
 	// Flush commands
-	for i := _gp.state.base_command; i < end_command; i += 1 {
+	for i := base_command; i < end_command; i += 1 {
 		cmd := &_gp.commands[i]
 
 		#partial switch cmd.cmd {
@@ -568,6 +569,11 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 	sdl.EndGPURenderPass(render_pass)
 
+	// Rewind frame scratch to base lengths now that upload + render are done.
+	resize(&_gp.commands, base_command)
+	resize(&_gp.uniforms, base_uniform)
+	resize(&_gp.vertices, base_vertex)
+
 	return true
 }
 
@@ -583,57 +589,46 @@ end :: proc () {
 
 @(private)
 _next_uniform :: proc () -> ^Uniform {
-	if _gp.current_uniform < u32(len(_gp.uniforms)) {
-		uniform := &_gp.uniforms[_gp.current_uniform]
-		_gp.current_uniform += 1
-		return uniform
-	} else {
-		_set_error(.Uniforms_Full)
-		return nil
+	if len(_gp.uniforms) < cap(_gp.uniforms) {
+		resize(&_gp.uniforms, len(_gp.uniforms) + 1)
+		return &_gp.uniforms[len(_gp.uniforms) - 1]
 	}
+	_set_error(.Uniforms_Full)
+	return nil
 }
 
 @(private)
 _prev_uniform :: proc () -> ^Uniform {
-	if _gp.current_uniform > 0 {
-		return &_gp.uniforms[_gp.current_uniform - 1]
-	} else {
-		return nil
+	if len(_gp.uniforms) > 0 {
+		return &_gp.uniforms[len(_gp.uniforms) - 1]
 	}
+	return nil
 }
 
-// Frame buffers use a bump slice plus a current index, not dynamic append
-// or a Queue: flush rewinds to base indices on submit, the optimizer does
-// index-based memmove, and a failed _next_* call rolls back by decrementing
-// the index. Growth would invalidate those indices; capacity errors surface
-// as sticky _last_error instead.
 @(private)
 _next_vertices :: proc (count: u32) -> [^]Vertex {
-	if _gp.current_vertex + count <= u32(len(_gp.vertices)) {
-		vertices := cast([^]Vertex)&_gp.vertices[_gp.current_vertex]
-		_gp.current_vertex += count
-		return vertices
-	} else {
-		_set_error(.Vertices_Full)
-		return nil
+	base := len(_gp.vertices)
+	if base + int(count) <= cap(_gp.vertices) {
+		resize(&_gp.vertices, base + int(count))
+		return cast([^]Vertex)&_gp.vertices[base]
 	}
+	_set_error(.Vertices_Full)
+	return nil
 }
 
 @(private)
 _next_command :: proc () -> ^_Command {
-	if _gp.current_command < u32(len(_gp.commands)) {
-		cmd := &_gp.commands[_gp.current_command]
-		_gp.current_command += 1
-		return cmd
-	} else {
-		return nil
+	if len(_gp.commands) < cap(_gp.commands) {
+		resize(&_gp.commands, len(_gp.commands) + 1)
+		return &_gp.commands[len(_gp.commands) - 1]
 	}
+	return nil
 }
 
 @(private)
 _prev_command :: proc (count: u32) -> ^_Command {
-	if _gp.current_command - _gp.state.base_command >= count {
-		return &_gp.commands[_gp.current_command - count]
+	if len(_gp.commands) - _gp.state.base_command >= int(count) {
+		return &_gp.commands[len(_gp.commands) - int(count)]
 	} else {
 		return nil
 	}
@@ -734,12 +729,12 @@ _merge_draw_commands :: proc (
 	if !overlaps_next {	// Merge with the previous draw command
 		if inter_cmd_count > 0 {
 			// Can't merge if we don't have enough space for vertices
-			if _gp.current_vertex + vertices_count > u32(len(_gp.vertices)) {
+			if len(_gp.vertices) + int(vertices_count) > cap(_gp.vertices) {
 				return false
 			}
 
 			prev_end_vertex := prev_cmd.args.draw.vertex_index + prev_cmd.args.draw.vertices_count
-			prev_vertices_count := _gp.current_vertex - prev_end_vertex
+			prev_vertices_count := u32(len(_gp.vertices)) - prev_end_vertex
 
 			// Avoid moving too meny vertices, otherwise it can cause performance
 			// regression
@@ -773,7 +768,7 @@ _merge_draw_commands :: proc (
 		prev_vertices_count := prev_cmd.args.draw.vertices_count
 
 		// Can't merge if we don't have enough space for vertices
-		if _gp.current_vertex + vertices_count > u32(len(_gp.vertices)) {
+		if len(_gp.vertices) + int(vertices_count) > cap(_gp.vertices) {
 			return false
 		}
 
@@ -783,13 +778,23 @@ _merge_draw_commands :: proc (
 			return false
 		}
 
+		// Pre-reserve the tail we are about to duplicate into BEFORE moving
+		// anything, so the copies below cannot alias a reallocation. The extra
+		// guard covers growth by prev_vertices_count (the old code would have
+		// written out of bounds here; this is strictly safer with identical
+		// success-path behavior).
+		if len(_gp.vertices) + int(prev_vertices_count) > cap(_gp.vertices) {
+			return false
+		}
+		resize(&_gp.vertices, len(_gp.vertices) + int(prev_vertices_count))
+
 		// Re-organized vertices
 		mem.copy(&_gp.vertices[vertex_index + prev_vertices_count], &_gp.vertices[vertex_index], int(vertices_count) * size_of(Vertex))
 		mem.copy_non_overlapping(&_gp.vertices[vertex_index], &_gp.vertices[prev_cmd.args.draw.vertex_index], int(prev_vertices_count) * size_of(Vertex))
 
 		// Update draw region and vertices
 		prev_region = {linalg.min(prev_region.min, region.min), linalg.max(prev_region.max, region.max)}
-		_gp.current_vertex += prev_vertices_count
+		// Tail already reserved before the copies above; nothing left to grow.
 		vertices_count += prev_vertices_count
 
 		// Configure the new draw command
@@ -818,7 +823,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: _Region, vertex_index: u32, ver
 
 	// If the region is completely outside of the viewport, skip the draw call
 	if region.min.x > 1.0 || region.min.y > 1.0 || region.max.x < -1.0 || region.max.y < -1.0 {
-		_gp.current_vertex -= vertices_count // rollback allocated vertices
+		resize(&_gp.vertices, int(vertex_index)) // rollback allocated vertices
 		return
 	}
 
@@ -839,21 +844,21 @@ _queue_draw :: proc (pipeline: Pipeline, region: _Region, vertex_index: u32, ver
 		if !reuse_uniform {
 			next_uniform := _next_uniform()
 			if next_uniform == nil {
-				_gp.current_vertex -= vertices_count // rollback allocated vertices
+				resize(&_gp.vertices, int(vertex_index)) // rollback allocated vertices
 				return
 			}
 			next_uniform^ = _gp.state.uniform
 		}
 
-		uniform_index = _gp.current_uniform - 1 // - 1 since _bxr_painter_next_uniform
-		// already incremented the index
+		uniform_index = u32(len(_gp.uniforms)) - 1 // - 1 since _next_uniform
+		// already extended the length
 	}
 
 	// New draw command
 	cmd := _next_command()
 
 	if cmd == nil {
-		_gp.current_vertex -= vertices_count // rollback allocated vertices
+		resize(&_gp.vertices, int(vertex_index)) // rollback allocated vertices
 		return
 	}
 
@@ -874,7 +879,7 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 	if len(vertices) == 0 do return
 
 	// Setup vertices
-	vertex_index := _gp.current_vertex
+	vertex_index := u32(len(_gp.vertices))
 	vertices_count := u32(len(vertices))
 	v := _next_vertices(vertices_count)
 	if v == nil do return
@@ -1384,7 +1389,7 @@ clear :: proc () {
 
 	// Setup vertices
 	vertices_count := u32(6)
-	vertex_index := _gp.current_vertex
+	vertex_index := u32(len(_gp.vertices))
 
 	v := _next_vertices(vertices_count)
 	if v == nil {
@@ -1427,7 +1432,7 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 	vertices_count := u32(len(vertices))
 
 	// Setup vertices
-	vertex_index := _gp.current_vertex
+	vertex_index := u32(len(_gp.vertices))
 	v := _next_vertices(vertices_count)
 	if v == nil {
 		return
@@ -1515,7 +1520,7 @@ draw_rects :: proc (rects: []Rect) {
 
 	// Setup vertices
 	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
-	vertex_index := _gp.current_vertex
+	vertex_index := u32(len(_gp.vertices))
 	v := _next_vertices(total_vertices)
 	if v == nil {
 		return
@@ -1620,7 +1625,7 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 
 	// Setup vertices
 	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
-	vertex_index := _gp.current_vertex
+	vertex_index := u32(len(_gp.vertices))
 	vertices := _next_vertices(total_vertices)
 	if vertices == nil {
 		return
