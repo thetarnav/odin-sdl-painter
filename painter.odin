@@ -119,6 +119,14 @@ _Gp :: struct {
 
 	// Desc Uniforms stack
 	uniforms: [dynamic]Uniform,
+
+	// Mid-frame segmentation (auto-flush-and-retry).
+	// Stashed from begin() args; nil handles mean legacy sticky-error behavior.
+	frame_cmd_buffer: ^sdl.GPUCommandBuffer,
+	frame_texture:    ^sdl.GPUTexture,
+	segments_flushed: int,   // generation counter; 0 selects CLEAR vs LOAD
+	seg_viewport:     Recti, // resolved viewport/scissor at current segment start
+	seg_scissor:      Recti,
 }
 
 _gp: _Gp
@@ -326,7 +334,7 @@ shutdown :: proc (allocator := context.allocator) {
 // buffer for the current frame.
 // If return false then an error occurred and the frame should be skipped,
 // use get_last_error() to get more information about the error.
-begin :: proc (size: Vec2i) -> bool {
+begin :: proc (size: Vec2i, cmd_buffer: ^sdl.GPUCommandBuffer = nil, texture: ^sdl.GPUTexture = nil) -> bool {
 	assert(_gp.initialized)
 
 	assert(len(_gp.states) < cap(_gp.states))
@@ -362,6 +370,11 @@ begin :: proc (size: Vec2i) -> bool {
 	_gp.state.base_uniform = len(_gp.uniforms)
 	_gp.state.base_command = len(_gp.commands)
 
+	_gp.frame_cmd_buffer = cmd_buffer
+	_gp.frame_texture    = texture
+	_gp.segments_flushed = 0
+	_snapshot_segment_state()
+
 	return true
 }
 
@@ -381,8 +394,6 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	end_command  := len(_gp.commands)
 	end_vertex   := len(_gp.vertices)
 
-	vertices_count := end_vertex - base_vertex // Number of vertices to draw
-
 	// NOTE: rewind to base lengths happens only after the upload + render
 	// loop below completes, so all pointers and indices stay valid for the
 	// whole pass. On early return the arrays stay extended (data preserved
@@ -394,13 +405,68 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	// Nothing to draw
 	if end_command <= base_command do return true
 
+	if _gp.segments_flushed == 0 {
+		// Fast single-pass path: byte-identical to legacy behavior.
+		if !_flush_range(cmd_buffer, texture, base_command, end_command, base_vertex, end_vertex, true, true) {
+			return false
+		}
+	} else {
+		// Remainder of a multi-segment frame: earlier segments are already on
+		// the texture, so load (preserve) and restore segment-start state.
+		if !_flush_range(cmd_buffer, texture, base_command, end_command, base_vertex, end_vertex, false, false) {
+			return false
+		}
+	}
+
+	// Rewind frame scratch to base lengths now that upload + render are done.
+	resize(&_gp.commands, base_command)
+	resize(&_gp.uniforms, base_uniform)
+	resize(&_gp.vertices, base_vertex)
+
+	return true
+}
+
+// Snapshot the resolved viewport/scissor at the current segment start.
+// Mirrors the resolve logic in set_scissor_rect: a disabled scissor means
+// viewport bounds, otherwise scissor is viewport-relative.
+@(private)
+_snapshot_segment_state :: proc () {
+	_gp.seg_viewport = _gp.state.viewport
+	if _gp.state.scissor.size.x < 0 && _gp.state.scissor.size.y < 0 {
+		_gp.seg_scissor = Recti{0, _gp.state.frame_size}
+	} else {
+		_gp.seg_scissor = Recti{_gp.state.viewport.pos + _gp.state.scissor.pos, _gp.state.scissor.size}
+	}
+}
+
+// Upload one vertex/command range and render it as its own render pass.
+// legacy_single=true reproduces the exact legacy single-pass behavior
+// (DONT_CARE, no state restore). Otherwise the first segment clears and
+// later segments load (preserving earlier segments) and re-emit the
+// segment-start viewport/scissor, since a new render pass starts clean.
+@(private)
+_flush_range :: proc (
+	cmd_buffer: ^sdl.GPUCommandBuffer,
+	texture: ^sdl.GPUTexture,
+	cmd_lo, cmd_hi: int,
+	vtx_lo, vtx_hi: int,
+	first_segment: bool,
+	legacy_single: bool,
+) -> bool {
+	_image_flush(cmd_buffer)
+
+	// Nothing to draw
+	if cmd_hi <= cmd_lo do return true
+
+	vertices_count := vtx_hi - vtx_lo
+
 	vertex_data := cast([^]Vertex)sdl.MapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer, true)
 	if vertex_data == nil {
 		_set_error(.Flush_Failed)
 		return false
 	}
 
-	copy(vertex_data[:len(_gp.vertices)-base_vertex], _gp.vertices[base_vertex:])
+	copy(vertex_data[:vtx_hi-vtx_lo], _gp.vertices[vtx_lo:vtx_hi])
 
 	sdl.UnmapGPUTransferBuffer(_gp.desc.gpu_device, _gp.vertex_transfer_buffer)
 
@@ -416,7 +482,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 	vertex_buffer_region := sdl.GPUBufferRegion{
 		buffer = _gp.vertex_data_buffer,
-		offset = u32(base_vertex) * u32(size_of(Vertex)),
+		offset = u32(vtx_lo) * u32(size_of(Vertex)),
 		size   = u32(vertices_count) * u32(size_of(Vertex)),
 	}
 
@@ -435,7 +501,20 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 		cycle       = false,
 	}
 
+	if !legacy_single {
+		color_target_info.load_op = .CLEAR if first_segment else .LOAD
+	}
+
 	render_pass := sdl.BeginGPURenderPass(cmd_buffer, &color_target_info, 1, nil)
+
+	// New render pass: restore the segment-start viewport/scissor so draws
+	// issued before any state command in this segment land correctly.
+	if !legacy_single && !first_segment {
+		x, y := **Vec2(_gp.seg_viewport.pos)
+		w, h := **Vec2(_gp.seg_viewport.size)
+		sdl.SetGPUViewport(render_pass, {x = x, y = y, w = w, h = h})
+		sdl.SetGPUScissor(render_pass, {**_gp.seg_scissor.pos, **_gp.seg_scissor.size})
+	}
 
 	cur_pipeline_id   := transmute(Pipeline)max(u32)
 	cur_uniform_index := max(int)
@@ -445,7 +524,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	}
 
 	// Flush commands
-	for cmd in _gp.commands[base_command:end_command] {
+	for cmd in _gp.commands[cmd_lo:cmd_hi] {
 
 		#partial switch cmd.cmd {
 		case .Draw:
@@ -532,7 +611,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 		case .Viewport:
 			x, y := **Vec2(cmd.args.viewport.pos)
 			w, h := **Vec2(cmd.args.viewport.size)
-			sdl.SetGPUViewport(render_pass, {x=x, y=y, w=w, h=h})
+			sdl.SetGPUViewport(render_pass, {x = x, y = y, w = w, h = h})
 		case .Scissor:
 			sdl.SetGPUScissor(render_pass, {**cmd.args.scissor.pos, **cmd.args.scissor.size})
 		}
@@ -540,10 +619,32 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 	sdl.EndGPURenderPass(render_pass)
 
-	// Rewind frame scratch to base lengths now that upload + render are done.
+	return true
+}
+
+// Submit everything recorded since the frame base as one segment, then rewind
+// frame scratch to the frame base so the failed reservation can be retried.
+// Returns false when no handles are stashed (legacy mode) or the GPU work fails.
+// Rewind is exact: every submitted command is fully described by absolute
+// indices, and all live references are recomputed after a generation change.
+@(private)
+_flush_segment :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> bool {
+	if cmd_buffer == nil || texture == nil do return false
+
+	base_command := _gp.state.base_command
+	base_uniform := _gp.state.base_uniform
+	base_vertex  := _gp.state.base_vertex
+
+	if !_flush_range(cmd_buffer, texture, base_command, len(_gp.commands), base_vertex, len(_gp.vertices), _gp.segments_flushed == 0, false) {
+		return false
+	}
+
 	resize(&_gp.commands, base_command)
 	resize(&_gp.uniforms, base_uniform)
 	resize(&_gp.vertices, base_vertex)
+
+	_gp.segments_flushed += 1
+	_snapshot_segment_state()
 
 	return true
 }
@@ -551,6 +652,9 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 // End recording draw calls for the current frame.
 end :: proc () {
 	assert(_gp.initialized)
+
+	_gp.frame_cmd_buffer = nil
+	_gp.frame_texture    = nil
 
 	_gp.state = pop(&_gp.states)
 }
@@ -561,6 +665,14 @@ end :: proc () {
 @(private)
 _next_uniform :: proc () -> ^Uniform {
 	if len(_gp.uniforms) < cap(_gp.uniforms) {
+		resize(&_gp.uniforms, len(_gp.uniforms) + 1)
+		return &_gp.uniforms[len(_gp.uniforms) - 1]
+	}
+	// A single slot always fits after one segment flush unless the whole
+	// budget is gone; without stashed handles fall through to the error.
+	if 1 <= cap(_gp.uniforms) - _gp.state.base_uniform &&
+	   _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) &&
+	   len(_gp.uniforms) < cap(_gp.uniforms) {
 		resize(&_gp.uniforms, len(_gp.uniforms) + 1)
 		return &_gp.uniforms[len(_gp.uniforms) - 1]
 	}
@@ -583,6 +695,19 @@ _next_vertices :: proc (count: int) -> [^]Vertex {
 		resize(&_gp.vertices, base + count)
 		return cast([^]Vertex)&_gp.vertices[base]
 	}
+	// Single request larger than the whole segment budget can never fit,
+	// even after a flush: hard error without touching the GPU.
+	if count > cap(_gp.vertices) - _gp.state.base_vertex {
+		_set_error(.Vertices_Full)
+		return nil
+	}
+	if _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) {
+		base = len(_gp.vertices)
+		if base + count <= cap(_gp.vertices) {
+			resize(&_gp.vertices, base + count)
+			return cast([^]Vertex)&_gp.vertices[base]
+		}
+	}
 	_set_error(.Vertices_Full)
 	return nil
 }
@@ -593,6 +718,16 @@ _next_command :: proc () -> ^_Command {
 		resize(&_gp.commands, len(_gp.commands) + 1)
 		return &_gp.commands[len(_gp.commands) - 1]
 	}
+	// A single slot always fits after one segment flush unless the whole
+	// budget is gone; without stashed handles fall through to the error.
+	if 1 <= cap(_gp.commands) - _gp.state.base_command &&
+	   _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) &&
+	   len(_gp.commands) < cap(_gp.commands) {
+		resize(&_gp.commands, len(_gp.commands) + 1)
+		return &_gp.commands[len(_gp.commands) - 1]
+	}
+	// Hardening: Commands_Full is now reported instead of silent nil.
+	_set_error(.Commands_Full)
 	return nil
 }
 
@@ -618,6 +753,36 @@ _region_overlaps :: proc (a, b: Region) -> bool {
 	return !(a.max.x <= b.min.x || b.max.x <= a.min.x || a.max.y <= b.min.y || b.max.y <= a.min.y)
 }
 
+// Equality check for one candidate draw command. Pipeline (one integer
+// compare) is always evaluated first; uniform bytes are only touched on a
+// pipeline hit, which also fixes a latent OOB: a custom-pipeline draw used
+// to index _gp.uniforms[cmd.uniform_index] even when the candidate was a
+// builtin-pipeline draw with uniform_index == max(int).
+@(private)
+_draw_matches :: proc (
+	pipeline: Pipeline,
+	texture: Texture_Uniform,
+	uniform: ^Uniform,
+	cmd: ^_Command,
+	texture_bytes: []u8, // hoisted mem.any_to_bytes(texture)
+	fast: bool,          // true for .Triangles (see _merge_draw_commands)
+) -> bool {
+	if cmd.args.draw.pipeline != pipeline do return false
+	if uniform == nil {
+		// Legacy semantics: a nil uniform matches any previous uniform.
+	} else if mem.compare(mem.any_to_bytes(uniform^), mem.any_to_bytes(_gp.uniforms[cmd.args.draw.uniform_index])) != 0 {
+		return false
+	}
+	if fast {
+		// Triangles hot path: field-wise texture equality. Cheaper than
+		// mem.compare and insensitive to padding bytes.
+		if cmd.args.draw.texture != texture do return false
+	} else if mem.compare(texture_bytes, mem.any_to_bytes(cmd.args.draw.texture)) != 0 {
+		return false
+	}
+	return true
+}
+
 @(private)
 _merge_draw_commands :: proc (
 	pipeline:       Pipeline,
@@ -626,11 +791,18 @@ _merge_draw_commands :: proc (
 	region:         Region,
 	vertex_index:   int,
 	vertices_count: int,
+	primitive_type: Primitive_Type,
 ) -> bool {
 	vertices_count := vertices_count
 	prev_cmd: ^_Command = nil
 	inter_cmds: [OPTIMIZER_DEPTH]^_Command
 	inter_cmd_count := 0
+
+	// Triangles fast path: strips are already excluded by the _queue_draw
+	// caller, and Triangles is always merge-eligible, so Triangles skips the
+	// generic byte-compare and uses field-wise texture equality.
+	fast := primitive_type == .Triangles
+	texture_bytes := mem.any_to_bytes(texture)
 
 	// Find commands that are mergable
 	lookup_depht := OPTIMIZER_DEPTH
@@ -651,18 +823,16 @@ _merge_draw_commands :: proc (
 		}
 
 		// Only command with the same pipeline, texture and uniform can be merged
-		texture_bytes := mem.any_to_bytes(texture)
-		cmd_texture_bytes := mem.any_to_bytes(cmd.args.draw.texture)
-		uniform_match := uniform == nil
-		if !uniform_match {
-			uniform_match = mem.compare(mem.any_to_bytes(uniform^), mem.any_to_bytes(_gp.uniforms[cmd.args.draw.uniform_index])) == 0
-		}
-		if cmd.args.draw.pipeline == pipeline &&
-		   mem.compare(texture_bytes, cmd_texture_bytes) == 0 &&
-		   uniform_match {
+		if _draw_matches(pipeline, texture, uniform, cmd, texture_bytes, fast) {
 			prev_cmd = cmd // Found a command to merge with, stop looking
 			break
 		} else {
+			// Hard bound: the .None extension above can stretch the scan
+			// past OPTIMIZER_DEPTH; never overrun inter_cmds. Stopping
+			// early only misses merges, never mis-merges.
+			if inter_cmd_count >= OPTIMIZER_DEPTH {
+				break
+			}
 			inter_cmds[inter_cmd_count] = cmd
 			inter_cmd_count += 1
 		}
@@ -713,9 +883,14 @@ _merge_draw_commands :: proc (
 				return false
 			}
 
-			// Re-organized vertices
-			mem.copy(&_gp.vertices[prev_end_vertex + vertices_count], &_gp.vertices[prev_end_vertex], prev_vertices_count * size_of(Vertex))
-			mem.copy_non_overlapping(&_gp.vertices[prev_end_vertex], &_gp.vertices[vertex_index + vertices_count], vertices_count * size_of(Vertex))
+		// Re-organized vertices. The shuffle below addresses slots up to
+		// len+vertices_count-1 (within cap, verified above); extend len
+		// across the copies so bounds checks pass, then restore it: a
+		// prev-merge moves vertices, total count is unchanged.
+		resize(&_gp.vertices, len(_gp.vertices) + vertices_count)
+		mem.copy(&_gp.vertices[prev_end_vertex + vertices_count], &_gp.vertices[prev_end_vertex], prev_vertices_count * size_of(Vertex))
+		mem.copy_non_overlapping(&_gp.vertices[prev_end_vertex], &_gp.vertices[vertex_index + vertices_count], vertices_count * size_of(Vertex))
+		resize(&_gp.vertices, len(_gp.vertices) - vertices_count)
 
 			// Offset vertices of inter_cmds
 			for i in 0 ..< inter_cmd_count {
@@ -731,8 +906,16 @@ _merge_draw_commands :: proc (
 		assert(inter_cmd_count > 0)
 
 		// Append new draw command
+		gen := _gp.segments_flushed
 		cmd := _next_command()
 		if cmd == nil {
+			return false
+		}
+		if _gp.segments_flushed != gen {
+			// _next_command flushed a segment and rewound frame scratch:
+			// prev_cmd/inter_cmds dangle and the fresh slot belongs to the
+			// new segment. Abort the merge without an error; the queue path
+			// retries the whole draw.
 			return false
 		}
 
@@ -784,7 +967,7 @@ _merge_draw_commands :: proc (
 }
 
 @(private)
-_queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_count: int, primitive_type: Primitive_Type) {
+_queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_count: int, primitive_type: Primitive_Type) -> bool {
 
 	pipeline := pipeline
 	uniform: ^Uniform
@@ -796,14 +979,41 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 	// If the region is completely outside of the viewport, skip the draw call
 	if region.min.x > 1.0 || region.min.y > 1.0 || region.max.x < -1.0 || region.max.y < -1.0 {
 		resize(&_gp.vertices, vertex_index) // rollback allocated vertices
-		return
+		return true // handled: culled, nothing to queue
 	}
+
+	gen := _gp.segments_flushed
 
 	// Try to merge with previous draw command
 	if primitive_type != .Triangle_Strip &&
 	   primitive_type != .Line_Strip &&
-	   _merge_draw_commands(pipeline, _gp.state.texture, uniform, region, vertex_index, vertices_count) {
-		return
+	   _merge_draw_commands(pipeline, _gp.state.texture, uniform, region, vertex_index, vertices_count, primitive_type) {
+		return true
+	}
+
+	if _gp.segments_flushed != gen {
+		// A segment flushed inside the merge path and rewound frame scratch,
+		// discarding this draw's vertices. No error is set: the caller must
+		// re-reserve and retry (see retry loops in the draw sites).
+		return false
+	}
+
+	// Proactive room check: merging is done, so this draw needs at most one
+	// uniform slot and one command slot. Flush first so the fallible appends
+	// below cannot discard already-written vertices.
+	need_uniform := uniform != nil && len(_gp.uniforms) >= cap(_gp.uniforms)
+	need_command := len(_gp.commands) >= cap(_gp.commands)
+	if need_uniform || need_command {
+		if _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) {
+			return false // room is free now, but vertices were rewound: caller retries
+		}
+		resize(&_gp.vertices, vertex_index) // rollback allocated vertices
+		if need_uniform {
+			_set_error(.Uniforms_Full)
+		} else {
+			_set_error(.Commands_Full)
+		}
+		return false
 	}
 
 	// Try to reuse previous uniform if possible
@@ -817,7 +1027,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 			next_uniform := _next_uniform()
 			if next_uniform == nil {
 				resize(&_gp.vertices, vertex_index) // rollback allocated vertices
-				return
+				return false
 			}
 			next_uniform^ = _gp.state.uniform
 		}
@@ -831,7 +1041,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 
 	if cmd == nil {
 		resize(&_gp.vertices, vertex_index) // rollback allocated vertices
-		return
+		return false
 	}
 
 	cmd.cmd = .Draw
@@ -841,6 +1051,8 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 	cmd.args.draw.uniform_index  = uniform_index
 	cmd.args.draw.vertex_index   = vertex_index
 	cmd.args.draw.vertices_count = vertices_count
+
+	return true
 }
 
 @(private)
@@ -850,32 +1062,41 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 
 	if len(vertices) == 0 do return
 
-	// Setup vertices
-	vertex_index   := len(_gp.vertices)
-	vertices_count := len(vertices)
-	v := _next_vertices(vertices_count)
-	if v == nil do return
-
-	width := _gp.state.thickness if primitive_type in bit_set[Primitive_Type]{.Points, .Lines, .Line_Strip} else 1.0
-	color := _gp.state.color
-	mvp   := _gp.state.mvp
-	lo    := Vec2(max(f32))
-	hi    := Vec2(-max(f32))
-	pad   := Vec2(width)
-
-	for pos, i in vertices {
-		p := transform_point(mvp, pos)
-
-		lo = linalg.min(lo, p - pad)
-		hi = linalg.max(hi, p + pad)
-
-		v[i] = {p, 0, color}
-	}
-
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
-	// Queue draw
-	_queue_draw(pipeline, {lo, hi}, vertex_index, vertices_count, primitive_type)
+	// Retry loop: _queue_draw may flush a full segment and rewind frame
+	// scratch (false with no error). Regenerating vertices is idempotent,
+	// so the draw is never dropped. Two attempts suffice (see _queue_draw).
+	for _ in 0 ..< 2 {
+		gen := _gp.segments_flushed
+
+		// Setup vertices (index AFTER reservation: a flush inside
+		// _next_vertices rewinds the array and moves the base).
+		vertices_count := len(vertices)
+		v := _next_vertices(vertices_count)
+		if v == nil do return
+		vertex_index := len(_gp.vertices) - vertices_count
+
+		width := _gp.state.thickness if primitive_type in bit_set[Primitive_Type]{.Points, .Lines, .Line_Strip} else 1.0
+		color := _gp.state.color
+		mvp   := _gp.state.mvp
+		lo    := Vec2(max(f32))
+		hi    := Vec2(-max(f32))
+		pad   := Vec2(width)
+
+		for pos, i in vertices {
+			p := transform_point(mvp, pos)
+
+			lo = linalg.min(lo, p - pad)
+			hi = linalg.max(hi, p + pad)
+
+			v[i] = {p, 0, color}
+		}
+
+		// Queue draw
+		if _queue_draw(pipeline, {lo, hi}, vertex_index, vertices_count, primitive_type) do return
+		if _last_error != .None || _gp.segments_flushed == gen do return
+	}
 }
 
 // Get the current transform matrix.
@@ -1347,34 +1568,38 @@ clear :: proc () {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	// Setup vertices
-	vertices_count := 6
-	vertex_index   := len(_gp.vertices)
-
-	v := _next_vertices(vertices_count)
-	if v == nil do return
-
-	// Compute vertices
-	quad := [4]Vec2{
-		{-1.0, -1.0}, // bottom-left
-		{ 1.0, -1.0}, // bottom-right
-		{ 1.0,  1.0}, // top-right
-		{-1.0,  1.0}, // top-left
-	}
-
-	texcoord: Vec2
-	color := _gp.state.color
-
-	v[0] = {quad[0], texcoord, color}
-	v[1] = {quad[1], texcoord, color}
-	v[2] = {quad[2], texcoord, color}
-	v[3] = {quad[2], texcoord, color}
-	v[4] = {quad[3], texcoord, color}
-	v[5] = {quad[0], texcoord, color}
-
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, {-1, 1}, vertex_index, vertices_count, .Triangles)
+	for _ in 0 ..< 2 {
+		gen := _gp.segments_flushed
+
+		// Setup vertices
+		vertices_count := 6
+		v := _next_vertices(vertices_count)
+		if v == nil do return
+		vertex_index := len(_gp.vertices) - vertices_count
+
+		// Compute vertices
+		quad := [4]Vec2{
+			{-1.0, -1.0}, // bottom-left
+			{ 1.0, -1.0}, // bottom-right
+			{ 1.0,  1.0}, // top-right
+			{-1.0,  1.0}, // top-left
+		}
+
+		texcoord: Vec2
+		color := _gp.state.color
+
+		v[0] = {quad[0], texcoord, color}
+		v[1] = {quad[1], texcoord, color}
+		v[2] = {quad[2], texcoord, color}
+		v[3] = {quad[2], texcoord, color}
+		v[4] = {quad[3], texcoord, color}
+		v[5] = {quad[0], texcoord, color}
+
+		if _queue_draw(pipeline, {-1, 1}, vertex_index, vertices_count, .Triangles) do return
+		if _last_error != .None || _gp.segments_flushed == gen do return
+	}
 }
 
 // Draw any primitive.
@@ -1384,35 +1609,39 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 
 	if len(vertices) == 0 do return
 
-	// Setup vertices
-	vertices_count := len(vertices)
-	vertex_index   := len(_gp.vertices)
-
-	v := _next_vertices(vertices_count)
-	if v == nil do return
-
-	mvp := _gp.state.mvp
-	lo  := Vec2(max(f32))
-	hi  := Vec2(-max(f32))
-
-	width := _gp.state.thickness if primitive_type in bit_set[Primitive_Type]{.Points, .Lines, .Line_Strip} else 1.0
-	pad   := Vec2(width)
-
-	for i in 0 ..< vertices_count {
-		p := transform_point(mvp, vertices[i].position)
-
-		lo = linalg.min(lo, p - pad)
-		hi = linalg.max(hi, p + pad)
-
-		v[i] = {p, vertices[i].texcoord, vertices[i].color}
-	}
-
-	region := Region{lo, hi}
-
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
-	// Queue draw
-	_queue_draw(pipeline, region, vertex_index, vertices_count, primitive_type)
+	for _ in 0 ..< 2 {
+		gen := _gp.segments_flushed
+
+		// Setup vertices
+		vertices_count := len(vertices)
+		v := _next_vertices(vertices_count)
+		if v == nil do return
+		vertex_index := len(_gp.vertices) - vertices_count
+
+		mvp := _gp.state.mvp
+		lo  := Vec2(max(f32))
+		hi  := Vec2(-max(f32))
+
+		width := _gp.state.thickness if primitive_type in bit_set[Primitive_Type]{.Points, .Lines, .Line_Strip} else 1.0
+		pad   := Vec2(width)
+
+		for i in 0 ..< vertices_count {
+			p := transform_point(mvp, vertices[i].position)
+
+			lo = linalg.min(lo, p - pad)
+			hi = linalg.max(hi, p + pad)
+
+			v[i] = {p, vertices[i].texcoord, vertices[i].color}
+		}
+
+		region := Region{lo, hi}
+
+		// Queue draw
+		if _queue_draw(pipeline, region, vertex_index, vertices_count, primitive_type) do return
+		if _last_error != .None || _gp.segments_flushed == gen do return
+	}
 }
 
 // Draw points in batch.
@@ -1468,56 +1697,61 @@ draw_rects :: proc (rects: []Rect) {
 		return
 	}
 
-	// Setup vertices
-	total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
-	vertex_index   := len(_gp.vertices)
-	v := _next_vertices(total_vertices)
-	if v == nil {
-		return
-	}
-
-	// Compute vertices
-	color := _gp.state.color
-	mvp := _gp.state.mvp
-	lo := Vec2(max(f32))
-	hi := Vec2(-max(f32))
-
-	for i in 0 ..< len(rects) {
-		rect := &rects[i]
-		quad := [4]Vec2{
-			rect.pos + {0, rect.size.y}, // bottom-left
-			rect.pos + rect.size, // bottom-right
-			rect.pos + {rect.size.x, 0}, // top-right
-			rect.pos, // top-left
-		}
-
-		_transform(mvp, quad[:], quad[:])
-
-		for q in quad {
-			lo = linalg.min(lo, q)
-			hi = linalg.max(hi, q)
-		}
-
-		texcoords := [4]Vec2{
-			{0.0, 1.0}, // bottom-left
-			{1.0, 1.0}, // bottom-right
-			{1.0, 0.0}, // top-right
-			{0.0, 0.0}, // top-left
-		}
-
-		// Make two triangles to form the quad
-		v[i * 6 + 0] = {quad[0], texcoords[0], color}
-		v[i * 6 + 1] = {quad[1], texcoords[1], color}
-		v[i * 6 + 2] = {quad[2], texcoords[2], color}
-		v[i * 6 + 3] = {quad[3], texcoords[3], color}
-		v[i * 6 + 4] = {quad[0], texcoords[0], color}
-		v[i * 6 + 5] = {quad[2], texcoords[2], color}
-	}
-
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles)
+	for _ in 0 ..< 2 {
+		gen := _gp.segments_flushed
+
+		// Setup vertices
+		total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
+		v := _next_vertices(total_vertices)
+		if v == nil {
+			return
+		}
+		vertex_index := len(_gp.vertices) - total_vertices
+
+		// Compute vertices
+		color := _gp.state.color
+		mvp   := _gp.state.mvp
+		lo := Vec2(max(f32))
+		hi := Vec2(-max(f32))
+
+		for i in 0 ..< len(rects) {
+			rect := &rects[i]
+			quad := [4]Vec2{
+				rect.pos + {0, rect.size.y}, // bottom-left
+				rect.pos + rect.size,        // bottom-right
+				rect.pos + {rect.size.x, 0}, // top-right
+				rect.pos,                    // top-left
+			}
+
+			_transform(mvp, quad[:], quad[:])
+
+			for q in quad {
+				lo = linalg.min(lo, q)
+				hi = linalg.max(hi, q)
+			}
+
+			texcoords := [4]Vec2{
+				{0.0, 1.0}, // bottom-left
+				{1.0, 1.0}, // bottom-right
+				{1.0, 0.0}, // top-right
+				{0.0, 0.0}, // top-left
+			}
+
+			// Make two triangles to form the quad
+			v[i * 6 + 0] = {quad[0], texcoords[0], color}
+			v[i * 6 + 1] = {quad[1], texcoords[1], color}
+			v[i * 6 + 2] = {quad[2], texcoords[2], color}
+			v[i * 6 + 3] = {quad[3], texcoords[3], color}
+			v[i * 6 + 4] = {quad[0], texcoords[0], color}
+			v[i * 6 + 5] = {quad[2], texcoords[2], color}
+		}
+
+		if _queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles) do return
+		if _last_error != .None || _gp.segments_flushed == gen do return
+	}
 }
 
 // Draw a single rectangle.
@@ -1574,61 +1808,66 @@ draw_textured_rects :: proc (channel: int, rects: []Textured_Rect) {
 		return
 	}
 
-	// Setup vertices
-	total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
-	vertex_index   := len(_gp.vertices)
-
-	vertices := _next_vertices(total_vertices)
-	if vertices == nil do return
-
 	// Get image info
 	image := _gp.state.texture.images[channel]
 	uv_scale := 1.0 / Vec2(get_image_size(image))
 
-	// Compute vertices
-	mvp   := _gp.state.mvp
-	color := _gp.state.color
-	lo := Vec2(max(f32))
-	hi := Vec2(-max(f32))
-
-	for rect, i in rects {
-		dst := rect.dst
-		quad := [4]Vec2{
-			dst.pos + {0, dst.size.y}, // bottom left
-			dst.pos + dst.size,        // bottom right
-			dst.pos + {dst.size.x, 0}, // top right
-			dst.pos,                   // top left
-		}
-
-		_transform(mvp, quad[:], quad[:])
-
-		for q in quad {
-			lo = linalg.min(lo, q)
-			hi = linalg.max(hi, q)
-		}
-
-		uv0 := rects[i].src.pos * uv_scale
-		uv1 := (rects[i].src.pos + rects[i].src.size) * uv_scale
-
-		vtexquad := [4]Vec2{
-			{uv0.x, uv1.y}, // bottom-left
-			uv1,            // bottom-right
-			{uv1.x, uv0.y}, // top-right
-			uv0,            // top-left
-		}
-
-		vertices[i * 6 + 0] = {quad[0], vtexquad[0], color}
-		vertices[i * 6 + 1] = {quad[1], vtexquad[1], color}
-		vertices[i * 6 + 2] = {quad[2], vtexquad[2], color}
-		vertices[i * 6 + 3] = {quad[3], vtexquad[3], color}
-		vertices[i * 6 + 4] = {quad[0], vtexquad[0], color}
-		vertices[i * 6 + 5] = {quad[2], vtexquad[2], color}
-	}
-
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles)
+	for _ in 0 ..< 2 {
+		gen := _gp.segments_flushed
+
+		// Setup vertices
+		total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
+
+		vertices := _next_vertices(total_vertices)
+		if vertices == nil do return
+		vertex_index := len(_gp.vertices) - total_vertices
+
+		// Compute vertices
+		mvp   := _gp.state.mvp
+		color := _gp.state.color
+		lo := Vec2(max(f32))
+		hi := Vec2(-max(f32))
+
+		for rect, i in rects {
+			dst := rect.dst
+			quad := [4]Vec2{
+				dst.pos + {0, dst.size.y}, // bottom left
+				dst.pos + dst.size,        // bottom right
+				dst.pos + {dst.size.x, 0}, // top right
+				dst.pos,                   // top left
+			}
+
+			_transform(mvp, quad[:], quad[:])
+
+			for q in quad {
+				lo = linalg.min(lo, q)
+				hi = linalg.max(hi, q)
+			}
+
+			uv0 := rects[i].src.pos * uv_scale
+			uv1 := (rects[i].src.pos + rects[i].src.size) * uv_scale
+
+			vtexquad := [4]Vec2{
+				{uv0.x, uv1.y}, // bottom-left
+				uv1,            // bottom-right
+				{uv1.x, uv0.y}, // top-right
+				uv0,            // top-left
+			}
+
+			vertices[i * 6 + 0] = {quad[0], vtexquad[0], color}
+			vertices[i * 6 + 1] = {quad[1], vtexquad[1], color}
+			vertices[i * 6 + 2] = {quad[2], vtexquad[2], color}
+			vertices[i * 6 + 3] = {quad[3], vtexquad[3], color}
+			vertices[i * 6 + 4] = {quad[0], vtexquad[0], color}
+			vertices[i * 6 + 5] = {quad[2], vtexquad[2], color}
+		}
+
+		if _queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles) do return
+		if _last_error != .None || _gp.segments_flushed == gen do return
+	}
 }
 
 // Draw a single textured rectangle.
