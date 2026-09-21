@@ -404,6 +404,9 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	resize(&_gp.uniforms, base_uniform)
 	resize(&_gp.vertices, base_vertex)
 
+	// Release textures shedured for deletion
+	_image_release_deferred()
+
 	return true
 }
 

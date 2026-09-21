@@ -139,8 +139,8 @@ destroy_image :: proc (image: Image) {
 	rec, ok := hm.get(&_img_ctx.images, image)
 	if !ok do return // already destroyed or foreign id: safe no-op
 
-	sdl.ReleaseGPUTexture(_img_ctx.gpu_device, rec.texture)
-	hm.remove(&_img_ctx.images, image)
+	assert(!rec.destroy)
+	rec.destroy = true
 }
 
 // Get the GPU texture associated with an image. Returns NULL if the image is
@@ -186,6 +186,7 @@ _Image :: struct {
 	using handle: Image,
 	texture:      ^sdl.GPUTexture,
 	using size:   Vec2i,
+	destroy:      bool,
 }
 
 _Image_Pending :: struct {
@@ -198,8 +199,9 @@ _Image_Context :: struct {
 	initialized:                 bool,
 	allocator:                   mem.Allocator, // stored once at setup; all staging alloc/free reads this
 	images:                      hm.Static_Handle_Map(IMAGE_MAX + 1, _Image, Image), // +1 white slot
-	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
-		// the white texture for upload done during setup phase
+	// Images that are pending to be uploaded to the GPU + 1
+	// for the white texture for upload done during setup phase
+	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending,
 	texture_transfer_buffer:     ^sdl.GPUTransferBuffer,
 	texture_transfer_buffer_size: int,
 	gpu_device:                  ^sdl.GPUDevice,
@@ -207,6 +209,16 @@ _Image_Context :: struct {
 }
 
 _img_ctx: _Image_Context
+
+_image_release_deferred :: proc () {
+	it := hm.iterator_make(&_img_ctx.images)
+	for img, h in hm.iterate(&it) do if img.destroy {
+		if img.texture != nil {
+			sdl.ReleaseGPUTexture(_img_ctx.gpu_device, img.texture)
+		}
+		hm.remove(&_img_ctx.images, h)
+	}
+}
 
 // Setup image resources management.
 @(private)
