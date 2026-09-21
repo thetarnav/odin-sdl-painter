@@ -9,8 +9,10 @@
 // needed.
 package sdl_painter
 
+import "core:slice"
 import sdl "vendor:sdl3"
 import "base:builtin"
+import c "core:c"
 import "core:log"
 import "core:mem"
 import hm "core:container/handle_map"
@@ -28,9 +30,11 @@ Image :: distinct hm.Handle32
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
-make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Image {
+make_image_from_surface :: proc (surface: ^sdl.Surface) -> (image: Image, ok: bool) {
 	assert(_img_ctx.initialized)
 	assert(surface != nil)
+
+	defer if !ok do _set_error(.Create_Image_Failed)
 
 	inner_surface := surface
 
@@ -45,11 +49,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 			sdl.GetPixelFormatName(surface.format), sdl.GetPixelFormatName(pixel_format))
 
 		inner_surface = sdl.ConvertSurface(surface, pixel_format)
-
-		if inner_surface == nil {
-			_set_error(.Create_Image_Failed)
-			return {}
-		}
+		if inner_surface == nil do return
 
 		converted = true
 	}
@@ -69,23 +69,18 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 	}
 
 	texture := sdl.CreateGPUTexture(_img_ctx.gpu_device, texture_create_info)
+	if texture == nil do return
 
-	if texture == nil {
-		_set_error(.Create_Image_Failed)
-		return {}
-	}
+	defer if !ok do sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 
 	// Insert image record into the map; exhaustion keeps the sticky-error contract.
 
-	handle, ok := hm.add(&_img_ctx.images, _Image{
+	image = hm.add(&_img_ctx.images, _Image{
 		texture = texture,
 		size    = {inner_surface.w, inner_surface.h}
-	})
-	if !ok {
-		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
-		_set_error(.Create_Image_Failed)
-		return {}
-	}
+	}) or_return
+
+	defer if !ok do hm.remove(&_img_ctx.images, image)
 
 	// Create a pending image to be flushed later
 
@@ -93,26 +88,48 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 	bpp := format_details.bytes_per_pixel
 	size := int(inner_surface.w) * int(inner_surface.h) * int(bpp)
 
-	pixels_copy, alloc_err := mem.alloc(size, allocator = allocator)
-	if alloc_err != .None || pixels_copy == nil {
-		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
-		hm.remove(&_img_ctx.images, handle)
-		_set_error(.Create_Image_Failed)
-		return {}
-	}
-	mem.copy(pixels_copy, inner_surface.pixels, size)
+	pixels_orig := ([^]byte)(inner_surface.pixels)[:size]
+	pixels_copy, alloc_err := slice.clone(pixels_orig, _img_ctx.allocator)
+	if alloc_err != .None do return
 
 	assert(len(_img_ctx.pending) < cap(_img_ctx.pending), "Increase IMAGE_MAX to create more images")
 	append(&_img_ctx.pending, _Image_Pending{
 		pixels = pixels_copy,
 		size   = {inner_surface.w, inner_surface.h},
-		handle = handle,
-		bpp    = bpp,
+		handle = image,
 	})
 
-	// Destroy the converted surface if we created one
+	return image, true
+}
 
-	return handle
+// Create an image from a raw pixel buffer with the given source pixel format.
+// Pitch is bytes per row; pass 0 for tightly packed rows (width * bpp).
+// The buffer is copied synchronously via make_image: caller keeps ownership
+// and may free/reuse it right after return.
+// Returns an invalid image on invalid input or upload failure.
+make_image_from_pixels :: proc(
+	pixels: rawptr,
+	width, height: int,
+	format: sdl.PixelFormat,
+	pitch := 0,
+) -> (image: Image, ok: bool) {
+
+	defer if !ok do _set_error(.Create_Image_Failed)
+
+	if pixels == nil || width <= 0 || height <= 0 do return
+
+	details := sdl.GetPixelFormatDetails(format)
+	if details == nil || details.bytes_per_pixel == 0 do return
+
+	min_pitch := width * int(details.bytes_per_pixel)
+	row_pitch := pitch if pitch != 0 else min_pitch
+	if row_pitch < min_pitch do return
+
+	transient := sdl.CreateSurfaceFrom(c.int(width), c.int(height), format, pixels, c.int(row_pitch))
+	if transient == nil do return
+
+	defer sdl.DestroySurface(transient)
+	return make_image_from_surface(transient)
 }
 
 // Destroy an image and free its resources.
@@ -173,13 +190,13 @@ _Image :: struct {
 
 _Image_Pending :: struct {
 	using handle: Image,
-	pixels:       rawptr,
+	pixels:       []byte,
 	using size:   Vec2i,
-	bpp:          u8,
 }
 
 _Image_Context :: struct {
 	initialized:                 bool,
+	allocator:                   mem.Allocator, // stored once at setup; all staging alloc/free reads this
 	images:                      hm.Static_Handle_Map(IMAGE_MAX + 1, _Image, Image), // +1 white slot
 	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
@@ -193,12 +210,13 @@ _img_ctx: _Image_Context
 
 // Setup image resources management.
 @(private)
-_image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
+_image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window, allocator: mem.Allocator) -> bool {
 	assert(!_img_ctx.initialized)
 	assert(gpu_device != nil)
 
 	_img_ctx.initialized = true
 
+	_img_ctx.allocator = allocator
 	_img_ctx.gpu_device = gpu_device
 	_img_ctx.window = window
 	_img_ctx.images = {}
@@ -223,6 +241,15 @@ _image_setup :: proc (gpu_device: ^sdl.GPUDevice, window: ^sdl.Window) -> bool {
 _image_shutdown :: proc () {
 	assert(_img_ctx.initialized)
 
+	// Drain unflushed uploads first: free staging memory before tearing
+	// down GPU resources. (No upload here — no command buffer at shutdown.)
+	for &pending in _img_ctx.pending {
+		if pending.pixels != nil {
+			delete(pending.pixels, _img_ctx.allocator)
+		}
+	}
+	builtin.clear(&_img_ctx.pending)
+
 	it := hm.iterator_make(&_img_ctx.images)
 	for rec, _ in hm.iterate(&it) {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, rec.texture)
@@ -238,14 +265,14 @@ _image_shutdown :: proc () {
 // Returns false if an error occurred, use GetLastError() to get more
 // information about the error.
 @(private)
-_image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.allocator) {
+_image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer) {
 	if len(_img_ctx.pending) == 0 {
 		return
 	}
 
 	total_size: int
 	for &pending in _img_ctx.pending {
-		total_size += int(pending.x) * int(pending.y) * int(pending.bpp)
+		total_size += len(pending.pixels)
 	}
 
 	// If the total size of pending images exceeds the transfer buffer size, we
@@ -262,11 +289,8 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 			new_size <<= 1
 		}
 
-		log.warnf(
-			"Total size of pending images (%v) exceeds transfer buffer size (%v), cycling transfer buffer",
-			total_size,
-			_img_ctx.texture_transfer_buffer_size,
-		)
+		log.warnf("Total size of pending images (%v) exceeds transfer buffer size (%v), cycling transfer buffer",
+			total_size, _img_ctx.texture_transfer_buffer_size)
 
 		sdl.ReleaseGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer)
 
@@ -284,42 +308,34 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 		_img_ctx.texture_transfer_buffer_size = new_size
 	}
 
-	texture_transfer_ptr := sdl.MapGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer, false)
+	texture_transfer_ptr := cast([^]byte)sdl.MapGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer, false)
 
 	copy_pass := sdl.BeginGPUCopyPass(cmd_buffer)
 	offset: int
 
 	for &pending in _img_ctx.pending {
-		size := int(pending.x) * int(pending.y) * int(pending.bpp)
-
 		rec, ok := hm.get(&_img_ctx.images, pending.handle)
-		if !ok {
-			// Destroyed before flush: drop staging pixels, skip upload.
-			mem.free(pending.pixels, allocator)
-			pending.pixels = nil
-			continue
+		if ok {
+			copy(texture_transfer_ptr[offset:][:len(pending.pixels)], pending.pixels)
+
+			transfer_info := sdl.GPUTextureTransferInfo{
+				transfer_buffer = _img_ctx.texture_transfer_buffer,
+				offset          = u32(offset),
+			}
+
+			region := sdl.GPUTextureRegion{
+				texture = rec.texture,
+				w       = u32(pending.x),
+				h       = u32(pending.y),
+				d       = 1,
+			}
+
+			sdl.UploadToGPUTexture(copy_pass, transfer_info, region, false)
+
+			offset += len(pending.pixels)
 		}
 
-		mem.copy(mem.ptr_offset(cast([^]u8)texture_transfer_ptr, offset), pending.pixels, size)
-
-		transfer_info := sdl.GPUTextureTransferInfo{
-			transfer_buffer = _img_ctx.texture_transfer_buffer,
-			offset          = u32(offset),
-		}
-
-		region := sdl.GPUTextureRegion{
-			texture = rec.texture,
-			w       = u32(pending.x),
-			h       = u32(pending.y),
-			d       = 1,
-		}
-
-		sdl.UploadToGPUTexture(copy_pass, transfer_info, region, false)
-
-		offset += size
-
-		mem.free(pending.pixels, allocator)
-		pending.pixels = nil
+		delete(pending.pixels, _img_ctx.allocator)
 	}
 
 	sdl.EndGPUCopyPass(copy_pass)

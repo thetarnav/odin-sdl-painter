@@ -20,7 +20,7 @@ sample_load_images_setup :: proc () {
 	}
 
 	for &i in _images_setup {
-		i = gp.make_image(surface)
+		i = gp.make_image_from_surface(surface) or_else panic(gp.get_error_message(gp.get_last_error()))
 	}
 
 	sdl.DestroySurface(surface)
@@ -47,7 +47,7 @@ sample_load_images_render :: proc (delta_time_ms: u64) {
 		}
 
 		for &i in _images_frame {
-			i = gp.make_image(surface)
+			i = gp.make_image_from_surface(surface) or_else panic(gp.get_error_message(gp.get_last_error()))
 		}
 
 		sdl.DestroySurface(surface)

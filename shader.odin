@@ -2,7 +2,6 @@
 // ----------------------------------------------------------------------------
 package sdl_painter
 
-import "base:runtime"
 import sdl "vendor:sdl3"
 import hm "core:container/handle_map"
 
@@ -108,7 +107,7 @@ _shader_shutdown :: proc () {
 // precompiled bytecode matching the GPU backend (SPIRV → MSL → DXIL).
 // Called from painter Setup. On failure the painter is shut down.
 @(private)
-_create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Allocator) -> (vert, frag: Shader, ok: bool) {
+_create_common_shaders :: proc (device: ^sdl.GPUDevice) -> (vert, frag: Shader, ok: bool) {
 	supported_formats := sdl.GetGPUShaderFormats(device)
 
 	format: sdl.GPUShaderFormat
@@ -133,7 +132,7 @@ _create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Alloc
 		bytecode_frag = _frag_dxil
 	} else {
 		_set_error(.Create_Common_Shader_Failed)
-		shutdown(allocator)
+		shutdown()
 		return {}, {}, false
 	}
 
@@ -146,7 +145,7 @@ _create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Alloc
 	})
 
 	if vert == {} {
-		shutdown(allocator)
+		shutdown()
 		return {}, {}, false
 	}
 
@@ -160,7 +159,7 @@ _create_common_shaders :: proc (device: ^sdl.GPUDevice, allocator: runtime.Alloc
 	})
 
 	if frag == {} {
-		shutdown(allocator)
+		shutdown()
 		return {}, {}, false
 	}
 

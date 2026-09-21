@@ -94,6 +94,7 @@ _Command :: struct {
 
 _Gp :: struct {
 	initialized:            bool,
+	allocator:              mem.Allocator, // stored once at setup; shutdown deletes read this
 	desc:                   Desc,
 	vertex_transfer_buffer: ^sdl.GPUTransferBuffer,
 	vertex_data_buffer:     ^sdl.GPUBuffer,
@@ -152,12 +153,15 @@ _find_or_create_pipeline :: proc (primitive_type: Primitive_Type, blend_mode: Bl
 
 // Setup painter context. Returns false if setup failed, use get_last_error()
 // to get more information about the error.
-setup :: proc (desc: Desc, allocator := context.allocator) -> bool {
+setup :: proc (desc: Desc, allocator := context.allocator) -> (ok: bool) {
 	assert(!_gp.initialized)
+
+	defer if !ok do shutdown()
 
 	_last_error = .None
 
 	_gp.initialized = true
+	_gp.allocator = allocator // single source; failure-path shutdown() below already reads it
 
 	_gp.desc.max_vertices = VERTICES_MAX if desc.max_vertices == 0 else desc.max_vertices
 	_gp.desc.max_commands = COMMANDS_MAX if desc.max_commands == 0 else desc.max_commands
@@ -172,10 +176,7 @@ setup :: proc (desc: Desc, allocator := context.allocator) -> bool {
 
 	_shader_setup(_gp.desc.gpu_device)
 	_pipeline_setup(_gp.desc.gpu_device, _gp.desc.window)
-	if !_image_setup(_gp.desc.gpu_device, _gp.desc.window) {
-		shutdown()
-		return false
-	}
+	_image_setup(_gp.desc.gpu_device, _gp.desc.window, allocator) or_return
 
 	// Create a white texture
 
@@ -188,17 +189,12 @@ setup :: proc (desc: Desc, allocator := context.allocator) -> bool {
 
 	white_surface := sdl.CreateSurfaceFrom(2, 2, pixel_format, raw_data(white_pixels[:]), c.int(format_details.bytes_per_pixel) * 2)
 	if white_surface == nil {
-		shutdown()
 		_set_error(.Create_White_Texture_Failed)
 		return false
 	}
 	defer sdl.DestroySurface(white_surface)
 
-	_gp.white_image = make_image(white_surface)
-	if _gp.white_image == {} {
-		shutdown()
-		return false
-	}
+	_gp.white_image = make_image_from_surface(white_surface) or_return
 
 	// Create a GPU transfer buffer for vertex data
 
@@ -242,12 +238,7 @@ setup :: proc (desc: Desc, allocator := context.allocator) -> bool {
 
 	// Create common shader
 
-	vert, frag, shaders_ok := _create_common_shaders(desc.gpu_device, allocator)
-	if !shaders_ok {
-		return false
-	}
-	_gp.shader_vert = vert
-	_gp.shader_frag = frag
+	_gp.shader_vert, _gp.shader_frag = _create_common_shaders(desc.gpu_device) or_return
 
 	// Create common pipelines
 	if _find_or_create_pipeline(.Points,     .None)  == {} ||
@@ -260,15 +251,15 @@ setup :: proc (desc: Desc, allocator := context.allocator) -> bool {
 	   _find_or_create_pipeline(.Triangles,  .Blend) == {} {
 
 		_set_error(.Create_Common_Pipeline_Failed)
-		shutdown()
 		return false
 	}
 
 	return true
 }
 
-// Shutdown painter context.
-shutdown :: proc (allocator := context.allocator) {
+// Shutdown painter context. Frees all painter-owned memory with the allocator
+// stored at setup time; takes no allocator argument by design.
+shutdown :: proc () {
 	if !_gp.initialized {
 		return
 	}

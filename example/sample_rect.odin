@@ -13,7 +13,7 @@ sample_rect_setup :: proc () {
 		log.errorf("Failed to load image: %s", sdl.GetError())
 	}
 
-	image_rect = gp.make_image(surface)
+	image_rect = gp.make_image_from_surface(surface) or_else panic(gp.get_error_message(gp.get_last_error()))
 
 	sdl.DestroySurface(surface)
 }
