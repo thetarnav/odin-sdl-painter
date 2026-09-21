@@ -25,6 +25,7 @@ Sample_Type :: enum {
 	Blend,
 	Sprite,
 	Load_Images,
+	Overflow,
 }
 _current_test := Sample_Type.Rect
 
@@ -103,6 +104,7 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 	sample_blend_setup()
 	sample_sprite_setup()
 	sample_load_images_setup()
+	sample_overflow_setup()
 
 	sdl.srand(0)
 
@@ -115,7 +117,17 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	// Acquire a command buffer for the current frame
 	cmd_buffer := sdl.AcquireGPUCommandBuffer(_context.gpu_device)
 
-	gp.begin({WINDOW_WIDTH, WINDOW_HEIGHT})
+	// Acquire the swapchain texture BEFORE recording so mid-frame segment
+	// flushes (auto-flush-and-retry) have a render target. On failure the
+	// frame is skipped but the command buffer is still submitted.
+	swapchain_texture: ^sdl.GPUTexture
+	if !sdl.WaitAndAcquireGPUSwapchainTexture(
+		cmd_buffer, _context.window, &swapchain_texture, nil, nil) || swapchain_texture == nil {
+		_ = sdl.SubmitGPUCommandBuffer(cmd_buffer)
+		return .CONTINUE
+	}
+
+	gp.begin({WINDOW_WIDTH, WINDOW_HEIGHT}, cmd_buffer, swapchain_texture)
 
 	{
 		gp.set_color({0, 0, 0, 255})
@@ -127,12 +139,12 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 		case .Sprite:      sample_sprite_render(DELTA_TIME_MS)
 		case .Blend:       sample_blend_render(DELTA_TIME_MS)
 		case .Load_Images: sample_load_images_render(DELTA_TIME_MS)
+		case .Overflow:    sample_overflow_render(DELTA_TIME_MS)
 		}
 
-		// Acquire the swapchain texture for the current frame
-		swapchain_texture: ^sdl.GPUTexture
-		_ = sdl.WaitAndAcquireGPUSwapchainTexture(
-			cmd_buffer, _context.window, &swapchain_texture, nil, nil)
+		if gp.get_last_error() != .None {
+			log.errorf("frame error: %s", gp.get_error_message(gp.get_last_error()))
+		}
 
 		gp.flush(cmd_buffer, swapchain_texture)
 	}
@@ -157,8 +169,8 @@ app_event :: proc "c" (appstate: rawptr, event: ^sdl.Event) -> sdl.AppResult {
 		return .SUCCESS
 	case .KEY_DOWN:
 		switch event.key.key {
-		case sdl.K_LEFT:  _current_test = Sample_Type((int(_current_test) - 1) %% int(max(Sample_Type)))
-		case sdl.K_RIGHT: _current_test = Sample_Type((int(_current_test) + 1) %% int(max(Sample_Type)))
+		case sdl.K_LEFT:  _current_test = Sample_Type((int(_current_test) - 1) %% (int(max(Sample_Type)) + 1))
+		case sdl.K_RIGHT: _current_test = Sample_Type((int(_current_test) + 1) %% (int(max(Sample_Type)) + 1))
 		}
 	}
 
@@ -173,6 +185,7 @@ app_quit :: proc "c" (appstate: rawptr, result: sdl.AppResult) {
 	sample_blend_shutdown()
 	sample_sprite_shutdown()
 	sample_load_images_shutdown()
+	sample_overflow_shutdown()
 
 	gp.shutdown()
 
