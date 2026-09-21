@@ -9,7 +9,6 @@ import gp ".."
 sample_overflow_setup :: proc () {}
 
 sample_overflow_render :: proc (delta_time_ms: u64) {
-	_ = delta_time_ms
 
 	// 1. Vertex + command torrent: 20000 overlapping rects alternating blend
 	// mode. Overlap blocks merging and the blend flip changes pipeline, so

@@ -76,7 +76,7 @@ sample_load_images_render :: proc (delta_time_ms: u64) {
 			src_rect := tile_region[i % 3]
 			dst_rect := gp.Rect{{f32(x), f32(y)}, {64, 64}}
 
-			gp.draw_textured_rect(0, gp.Textured_Rect{dst_rect, src_rect})
+			gp.draw_textured_rect(0, dst_rect, src_rect)
 		}
 
 		gp.reset_image(0)
