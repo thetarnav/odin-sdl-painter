@@ -35,7 +35,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 	inner_surface := surface
 
 	texture_format := sdl.GetGPUSwapchainTextureFormat(_img_ctx.gpu_device, _img_ctx.window)
-	pixel_format := sdl.GetPixelFormatFromGPUTextureFormat(texture_format)
+	pixel_format   := sdl.GetPixelFormatFromGPUTextureFormat(texture_format)
 
 	// Convert the surface to the swapchain texture format if needed
 
@@ -224,9 +224,7 @@ _image_shutdown :: proc () {
 	assert(_img_ctx.initialized)
 
 	it := hm.iterator_make(&_img_ctx.images)
-	for {
-		rec, _, ok := hm.iterate(&it)
-		if !ok do break
+	for rec, _ in hm.iterate(&it) {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, rec.texture)
 	}
 

@@ -1378,7 +1378,7 @@ clear :: proc () {
 
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, Region{-1, 1}, vertex_index, vertices_count, .Triangles)
+	_queue_draw(pipeline, {-1, 1}, vertex_index, vertices_count, .Triangles)
 }
 
 // Draw any primitive.

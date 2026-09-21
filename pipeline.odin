@@ -146,9 +146,7 @@ _pipeline_shutdown :: proc () {
 	assert(_pipeline_ctx.initialized)
 
 	it := hm.iterator_make(&_pipeline_ctx.pipelines)
-	for {
-		rec, _, ok := hm.iterate(&it)
-		if !ok do break
+	for rec, _ in hm.iterate(&it) {
 		sdl.ReleaseGPUGraphicsPipeline(_pipeline_ctx.gpu_device, rec.pipeline)
 	}
 

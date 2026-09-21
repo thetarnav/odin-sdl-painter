@@ -97,9 +97,7 @@ _shader_shutdown :: proc () {
 	assert(_shader_ctx.initialized)
 
 	it := hm.iterator_make(&_shader_ctx.shaders)
-	for {
-		rec, _, ok := hm.iterate(&it)
-		if !ok do break
+	for rec, _ in hm.iterate(&it) {
 		sdl.ReleaseGPUShader(_shader_ctx.gpu_device, rec.shader)
 	}
 

@@ -43,27 +43,27 @@ MAT_IDENTITY :: Mat{1, 0, 0, 0, 1, 0}
 #assert(size_of(Recti) == 16, "Recti layout changed")
 
 // Lift an affine 2x3 matrix to homogeneous 3x3 (bottom row 0, 0, 1).
-to_mat3 :: proc (m: Mat) -> Mat3 {
+to_mat3 :: proc "contextless" (m: Mat) -> Mat3 {
 	return Mat3{m[0, 0], m[0, 1], m[0, 2], m[1, 0], m[1, 1], m[1, 2], 0, 0, 1}
 }
 
 // Project a homogeneous 3x3 matrix back to affine 2x3 (drops bottom row).
-from_mat3 :: proc (m: Mat3) -> Mat {
+from_mat3 :: proc "contextless" (m: Mat3) -> Mat {
 	return Mat{m[0, 0], m[0, 1], m[0, 2], m[1, 0], m[1, 1], m[1, 2]}
 }
 
 // Compose affine transforms: result applies b first, then a.
 // Replaces _mul_projection_transform.
-compose :: proc (a, b: Mat) -> Mat {
+compose :: proc "contextless" (a, b: Mat) -> Mat {
 	return from_mat3(to_mat3(a) * to_mat3(b))
 }
 
 // Apply an affine transform to a point. Replaces _mat3_mul_vec2.
-transform_point :: proc (m: Mat, p: Vec2) -> Vec2 {
-	return m * [3]f32{p.x, p.y, 1}
+transform_point :: proc "contextless" (m: Mat, p: Vec2) -> Vec2 {
+	return m * [3]f32{**p, 1}
 }
 
 // Convert an integer rect to a float rect (draw-group boundary helper).
-rect_to_float :: proc (r: Recti) -> Rect {
+rect_to_float :: proc "contextless" (r: Recti) -> Rect {
 	return {Vec2(r.pos), Vec2(r.size)}
 }
