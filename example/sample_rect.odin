@@ -36,7 +36,7 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 			gp.set_color({255, 0, 0, 255})
 
 			// Move to the left area of the viewport
-			gp.translate(f32(h.x) * 0.5, f32(h.y))
+			gp.translate(Vec2(h) * {0.5, 1})
 
 			half_shape := f32(window.x) * 0.15 // 15% of the viewport width
 
@@ -52,12 +52,12 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 
 		gp.push_transform()
 		{
-			size := gp.Vec2(gp.get_image_size(image_rect))
+			size := Vec2(gp.get_image_size(image_rect))
 
 			gp.set_color(255)
 
 			// Move to the right area of the viewport
-			gp.translate(f32(h.x) * 0.5, f32(h.y))
+			gp.translate(Vec2(h) * {0.5, 1})
 
 			gp.set_image(0, image_rect)
 			gp.draw_textured_rect(0,

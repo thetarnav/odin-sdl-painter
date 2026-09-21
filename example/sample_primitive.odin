@@ -49,7 +49,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 
 		if gp.transform_scope() {
 			// Move to the center of the left area of the viewport
-			gp.translate(gp.Vec2(h) * {0.25, 0.5})
+			gp.translate(Vec2(h) * {0.25, 0.5})
 
 			// Oscillate the scale between 0.75 and 1.25
 			gp.scale(1.0 + 0.25 * osc_1, 1.0 + 0.25 * osc_1)
@@ -68,7 +68,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 		gp.push_transform()
 		{
 			// Move to the center of the right area of the viewport
-			gp.translate(gp.Vec2(h) * {0.75, 0.5})
+			gp.translate(Vec2(h) * {0.75, 0.5})
 
 			// Oscillate the scale between 0.75 and 1.25
 			gp.scale(1.0 + 0.25 * -osc_1, 1.0 + 0.25 * -osc_1)
@@ -113,7 +113,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 		gp.push_transform()
 		{
 			// Move the the center of the left area of the viewport
-			gp.translate(f32(h.x) * 0.25, f32(h.y) * 0.5)
+			gp.translate(Vec2(h) * {0.25, 0.5})
 
 			// Rotate 90 degrees clockwise and counter-clockwise every second
 			gp.rotate(osc_1 * math.PI * 0.5)
@@ -148,7 +148,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 		gp.push_transform()
 		{
 			// Move to the center of the right area of the viewport
-			gp.translate(f32(h.x) * 0.75, f32(h.y) * 0.5)
+			gp.translate(Vec2(h) * {0.75, 0.5})
 
 			half_shape := f32(h.x) * 0.15 // 15% of the viewport width
 
@@ -203,11 +203,9 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 
 			gp.set_color({255, 255, 0, 255})
 
-			gp.draw_line(gp.Line{a = -half_shape,
-			             b =  half_shape})
+			gp.draw_line(-half_shape, half_shape)
 
-			gp.draw_line(gp.Line{a = {half_shape, -half_shape},
-			             b = {-half_shape, half_shape}})
+			gp.draw_line({half_shape, -half_shape}, {-half_shape, half_shape})
 		}
 		gp.pop_transform()
 	}

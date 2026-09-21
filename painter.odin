@@ -1434,6 +1434,10 @@ draw_lines :: proc (lines: []Line) {
 draw_line_single :: proc (line: Line) {
 	draw_lines({line})
 }
+draw_line_vec :: proc (a, b: Vec2) {
+	draw_line({a, b})
+}
+draw_line :: proc {draw_line_single, draw_line_vec}
 
 // Draw a stip of lines.
 draw_line_strip :: proc (points: []Vec2) {
@@ -1446,7 +1450,7 @@ draw_triangles :: proc (triangles: []Triangle) {
 }
 
 // Draw a single triangle.
-draw_triangle_single :: proc (triangle: Triangle) {
+draw_triangle :: proc (triangle: Triangle) {
 	draw_triangles({triangle})
 }
 
@@ -1637,7 +1641,5 @@ draw_textured_rect_single_dst_src :: proc (channel: int, dst, src: Rect) {
 }
 
 draw_point         :: proc {draw_point_single, draw_points}
-draw_line          :: proc {draw_line_single, draw_lines, draw_line_strip}
-draw_triangle      :: proc {draw_triangle_single, draw_triangles, draw_triangle_strip}
 draw_rect          :: proc {draw_rect_single, draw_rects, draw_recti, draw_rect_vec, draw_rect_xywh, draw_rect_vec_i, draw_rect_xywh_i}
 draw_textured_rect :: proc {draw_textured_rect_single, draw_textured_rect_single_dst_src, draw_textured_rects, draw_textured_rect_vec, draw_textured_rect_xywh, draw_textured_rect_veci, draw_textured_rect_xywhi}
