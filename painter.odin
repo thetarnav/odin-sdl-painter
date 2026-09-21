@@ -76,9 +76,9 @@ _Draw_Args :: struct {
 	region:         Region,
 	pipeline:       Pipeline,
 	texture:        Texture_Uniform,
-	uniform_index:  u32,
-	vertex_index:   u32,
-	vertices_count: u32,
+	uniform_index:  int,
+	vertex_index:   int,
+	vertices_count: int,
 }
 
 _Command_Args :: struct {
@@ -438,7 +438,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	render_pass := sdl.BeginGPURenderPass(cmd_buffer, &color_target_info, 1, nil)
 
 	cur_pipeline_id   := transmute(Pipeline)max(u32)
-	cur_uniform_index := max(u32)
+	cur_uniform_index := max(int)
 	cur_image_ids: [TEXTURE_SLOTS_MAX]Image
 	for i in 0 ..< TEXTURE_SLOTS_MAX {
 		cur_image_ids[i] = transmute(Image)max(u32)
@@ -509,7 +509,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 			}
 
 			// Rebind uniforms if needed
-			if rebind_uniforms && cur_uniform_index != max(u32) {
+			if rebind_uniforms && cur_uniform_index != max(int) {
 				uniform := &_gp.uniforms[draw.uniform_index]
 
 				if uniform.vs_size > 0 {
@@ -522,13 +522,13 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 
 			vertex_buffer_binding := sdl.GPUBufferBinding{
 				buffer = _gp.vertex_data_buffer,
-				offset = draw.vertex_index * u32(size_of(Vertex)),
+				offset = u32(draw.vertex_index * size_of(Vertex)),
 			}
 
 			// In every case we need to bind vertex buffers
 			sdl.BindGPUVertexBuffers(render_pass, 0, &vertex_buffer_binding, 1)
 
-			sdl.DrawGPUPrimitives(render_pass, draw.vertices_count, 1, 0, 0)
+			sdl.DrawGPUPrimitives(render_pass, u32(draw.vertices_count), 1, 0, 0)
 		case .Viewport:
 			x, y := **Vec2(cmd.args.viewport.pos)
 			w, h := **Vec2(cmd.args.viewport.size)
@@ -577,10 +577,10 @@ _prev_uniform :: proc () -> ^Uniform {
 }
 
 @(private)
-_next_vertices :: proc (count: u32) -> [^]Vertex {
+_next_vertices :: proc (count: int) -> [^]Vertex {
 	base := len(_gp.vertices)
-	if base + int(count) <= cap(_gp.vertices) {
-		resize(&_gp.vertices, base + int(count))
+	if base + count <= cap(_gp.vertices) {
+		resize(&_gp.vertices, base + count)
 		return cast([^]Vertex)&_gp.vertices[base]
 	}
 	_set_error(.Vertices_Full)
@@ -624,8 +624,8 @@ _merge_draw_commands :: proc (
 	texture:        Texture_Uniform,
 	uniform:        ^Uniform,
 	region:         Region,
-	vertex_index:   u32,
-	vertices_count: u32,
+	vertex_index:   int,
+	vertices_count: int,
 ) -> bool {
 	vertices_count := vertices_count
 	prev_cmd: ^_Command = nil
@@ -705,7 +705,7 @@ _merge_draw_commands :: proc (
 			}
 
 			prev_end_vertex := prev_cmd.args.draw.vertex_index + prev_cmd.args.draw.vertices_count
-			prev_vertices_count := u32(len(_gp.vertices)) - prev_end_vertex
+			prev_vertices_count := len(_gp.vertices) - prev_end_vertex
 
 			// Avoid moving too meny vertices, otherwise it can cause performance
 			// regression
@@ -784,7 +784,7 @@ _merge_draw_commands :: proc (
 }
 
 @(private)
-_queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vertices_count: u32, primitive_type: Primitive_Type) {
+_queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_count: int, primitive_type: Primitive_Type) {
 	pipeline := pipeline
 	uniform: ^Uniform = nil
 	if _gp.state.pipeline != {} {
@@ -806,7 +806,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vert
 	}
 
 	// Try to reuse previous uniform if possible
-	uniform_index := max(u32)
+	uniform_index := max(int)
 	if uniform != nil {
 		prev_uniform := _prev_uniform()
 
@@ -821,7 +821,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vert
 			next_uniform^ = _gp.state.uniform
 		}
 
-		uniform_index = u32(len(_gp.uniforms)) - 1 // - 1 since _next_uniform
+		uniform_index = len(_gp.uniforms) - 1 // - 1 since _next_uniform
 		// already extended the length
 	}
 
@@ -829,16 +829,16 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index: u32, vert
 	cmd := _next_command()
 
 	if cmd == nil {
-		resize(&_gp.vertices, int(vertex_index)) // rollback allocated vertices
+		resize(&_gp.vertices, vertex_index) // rollback allocated vertices
 		return
 	}
 
 	cmd.cmd = .Draw
-	cmd.args.draw.pipeline = pipeline
-	cmd.args.draw.texture = _gp.state.texture
-	cmd.args.draw.region = region
-	cmd.args.draw.uniform_index = uniform_index
-	cmd.args.draw.vertex_index = vertex_index
+	cmd.args.draw.pipeline       = pipeline
+	cmd.args.draw.texture        = _gp.state.texture
+	cmd.args.draw.region         = region
+	cmd.args.draw.uniform_index  = uniform_index
+	cmd.args.draw.vertex_index   = vertex_index
 	cmd.args.draw.vertices_count = vertices_count
 }
 
@@ -850,8 +850,8 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 	if len(vertices) == 0 do return
 
 	// Setup vertices
-	vertex_index := u32(len(_gp.vertices))
-	vertices_count := u32(len(vertices))
+	vertex_index   := len(_gp.vertices)
+	vertices_count := len(vertices)
 	v := _next_vertices(vertices_count)
 	if v == nil do return
 
@@ -1351,8 +1351,8 @@ clear :: proc () {
 	assert(len(_gp.states) > 0)
 
 	// Setup vertices
-	vertices_count := u32(6)
-	vertex_index := u32(len(_gp.vertices))
+	vertices_count := 6
+	vertex_index   := len(_gp.vertices)
 
 	v := _next_vertices(vertices_count)
 	if v == nil do return
@@ -1385,13 +1385,12 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	if len(vertices) == 0 {
-		return
-	}
-	vertices_count := u32(len(vertices))
+	if len(vertices) == 0 do return
 
 	// Setup vertices
-	vertex_index := u32(len(_gp.vertices))
+	vertices_count := len(vertices)
+	vertex_index   := len(_gp.vertices)
+
 	v := _next_vertices(vertices_count)
 	if v == nil do return
 
@@ -1469,8 +1468,8 @@ draw_rects :: proc (rects: []Rect) {
 	}
 
 	// Setup vertices
-	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
-	vertex_index := u32(len(_gp.vertices))
+	total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
+	vertex_index   := len(_gp.vertices)
 	v := _next_vertices(total_vertices)
 	if v == nil {
 		return
@@ -1570,8 +1569,9 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 	}
 
 	// Setup vertices
-	total_vertices := u32(len(rects)) * 6 // 2 triangles per rect, 3 vertices each
-	vertex_index := u32(len(_gp.vertices))
+	total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
+	vertex_index   := len(_gp.vertices)
+
 	vertices := _next_vertices(total_vertices)
 	if vertices == nil do return
 
