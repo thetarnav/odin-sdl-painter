@@ -56,8 +56,8 @@ State :: struct {
 }
 
 Desc :: struct {
-	max_vertices: u32,
-	max_commands: u32,
+	max_vertices: int,
+	max_commands: int,
 	window:       ^sdl.Window,
 	gpu_device:   ^sdl.GPUDevice,
 }
@@ -157,9 +157,9 @@ setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
 	_gp.desc.window       = desc.window
 	_gp.desc.gpu_device   = desc.gpu_device
 
-	_gp.vertices = make([dynamic]Vertex,   0, int(_gp.desc.max_vertices), allocator)
-	_gp.commands = make([dynamic]_Command, 0, int(_gp.desc.max_commands), allocator)
-	_gp.uniforms = make([dynamic]Uniform,  0, int(_gp.desc.max_commands), allocator)
+	_gp.vertices = make([dynamic]Vertex,   0, _gp.desc.max_vertices, allocator)
+	_gp.commands = make([dynamic]_Command, 0, _gp.desc.max_commands, allocator)
+	_gp.uniforms = make([dynamic]Uniform,  0, _gp.desc.max_commands, allocator)
 
 	// Setup resources management for shaders, pipelines and images
 
@@ -597,9 +597,9 @@ _next_command :: proc () -> ^_Command {
 }
 
 @(private)
-_prev_command :: proc (count: u32) -> ^_Command {
-	if len(_gp.commands) - _gp.state.base_command >= int(count) {
-		return &_gp.commands[len(_gp.commands) - int(count)]
+_prev_command :: proc (count: int) -> ^_Command {
+	if len(_gp.commands) - _gp.state.base_command >= count {
+		return &_gp.commands[len(_gp.commands) - count]
 	} else {
 		return nil
 	}
@@ -633,7 +633,7 @@ _merge_draw_commands :: proc (
 	inter_cmd_count := 0
 
 	// Find commands that are mergable
-	lookup_depht := u32(OPTIMIZER_DEPTH)
+	lookup_depht := OPTIMIZER_DEPTH
 	for depth in 0 ..= lookup_depht {
 		cmd := _prev_command(depth + 1)
 
@@ -700,7 +700,7 @@ _merge_draw_commands :: proc (
 	if !overlaps_next {	// Merge with the previous draw command
 		if inter_cmd_count > 0 {
 			// Can't merge if we don't have enough space for vertices
-			if len(_gp.vertices) + int(vertices_count) > cap(_gp.vertices) {
+			if len(_gp.vertices) + vertices_count > cap(_gp.vertices) {
 				return false
 			}
 
@@ -714,8 +714,8 @@ _merge_draw_commands :: proc (
 			}
 
 			// Re-organized vertices
-			mem.copy(&_gp.vertices[prev_end_vertex + vertices_count], &_gp.vertices[prev_end_vertex], int(prev_vertices_count) * size_of(Vertex))
-			mem.copy_non_overlapping(&_gp.vertices[prev_end_vertex], &_gp.vertices[vertex_index + vertices_count], int(vertices_count) * size_of(Vertex))
+			mem.copy(&_gp.vertices[prev_end_vertex + vertices_count], &_gp.vertices[prev_end_vertex], prev_vertices_count * size_of(Vertex))
+			mem.copy_non_overlapping(&_gp.vertices[prev_end_vertex], &_gp.vertices[vertex_index + vertices_count], vertices_count * size_of(Vertex))
 
 			// Offset vertices of inter_cmds
 			for i in 0 ..< inter_cmd_count {
@@ -739,7 +739,7 @@ _merge_draw_commands :: proc (
 		prev_vertices_count := prev_cmd.args.draw.vertices_count
 
 		// Can't merge if we don't have enough space for vertices
-		if len(_gp.vertices) + int(vertices_count) > cap(_gp.vertices) {
+		if len(_gp.vertices) + vertices_count > cap(_gp.vertices) {
 			return false
 		}
 
@@ -754,14 +754,14 @@ _merge_draw_commands :: proc (
 		// guard covers growth by prev_vertices_count (the old code would have
 		// written out of bounds here; this is strictly safer with identical
 		// success-path behavior).
-		if len(_gp.vertices) + int(prev_vertices_count) > cap(_gp.vertices) {
+		if len(_gp.vertices) + prev_vertices_count > cap(_gp.vertices) {
 			return false
 		}
-		resize(&_gp.vertices, len(_gp.vertices) + int(prev_vertices_count))
+		resize(&_gp.vertices, len(_gp.vertices) + prev_vertices_count)
 
 		// Re-organized vertices
-		mem.copy(&_gp.vertices[vertex_index + prev_vertices_count], &_gp.vertices[vertex_index], int(vertices_count) * size_of(Vertex))
-		mem.copy_non_overlapping(&_gp.vertices[vertex_index], &_gp.vertices[prev_cmd.args.draw.vertex_index], int(prev_vertices_count) * size_of(Vertex))
+		mem.copy(&_gp.vertices[vertex_index + prev_vertices_count], &_gp.vertices[vertex_index], vertices_count * size_of(Vertex))
+		mem.copy_non_overlapping(&_gp.vertices[vertex_index], &_gp.vertices[prev_cmd.args.draw.vertex_index], prev_vertices_count * size_of(Vertex))
 
 		// Update draw region and vertices
 		prev_region = {linalg.min(prev_region.min, region.min), linalg.max(prev_region.max, region.max)}
@@ -785,8 +785,9 @@ _merge_draw_commands :: proc (
 
 @(private)
 _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_count: int, primitive_type: Primitive_Type) {
+
 	pipeline := pipeline
-	uniform: ^Uniform = nil
+	uniform: ^Uniform
 	if _gp.state.pipeline != {} {
 		pipeline = _gp.state.pipeline
 		uniform = &_gp.state.uniform
@@ -794,7 +795,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 
 	// If the region is completely outside of the viewport, skip the draw call
 	if region.min.x > 1.0 || region.min.y > 1.0 || region.max.x < -1.0 || region.max.y < -1.0 {
-		resize(&_gp.vertices, int(vertex_index)) // rollback allocated vertices
+		resize(&_gp.vertices, vertex_index) // rollback allocated vertices
 		return
 	}
 
@@ -815,7 +816,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 		if !reuse_uniform {
 			next_uniform := _next_uniform()
 			if next_uniform == nil {
-				resize(&_gp.vertices, int(vertex_index)) // rollback allocated vertices
+				resize(&_gp.vertices, vertex_index) // rollback allocated vertices
 				return
 			}
 			next_uniform^ = _gp.state.uniform
@@ -1049,21 +1050,21 @@ pipeline_set   :: set_pipeline
 pipeline_reset :: reset_pipeline
 
 // Set uniform data for the current pipeline.
-set_uniform :: proc (vs_data: rawptr, vs_size: i32, fs_data: rawptr, fs_size: i32) {
+set_uniform :: proc (vs_data: rawptr, vs_size: int, fs_data: rawptr, fs_size: int) {
 	assert(_gp.initialized)
 	assert(_gp.state.pipeline != {})
 
-	size := int(vs_size) + int(fs_size)
+	size := vs_size + fs_size
 
 	assert(size <= UNIFORM_FLOATS_MAX * size_of(f32))
 
 	if vs_size > 0 {
 		assert(vs_data != nil)
-		mem.copy(&_gp.state.uniform.data, vs_data, int(vs_size))
+		mem.copy(&_gp.state.uniform.data, vs_data, vs_size)
 	}
 	if fs_size > 0 {
 		assert(fs_data != nil)
-		mem.copy(mem.ptr_offset(cast([^]u8)&_gp.state.uniform.data, int(vs_size)), fs_data, int(fs_size))
+		mem.copy(mem.ptr_offset(cast([^]u8)&_gp.state.uniform.data, vs_size), fs_data, fs_size)
 	}
 
 	old_size := int(_gp.state.uniform.vs_size) + int(_gp.state.uniform.fs_size)
@@ -1545,21 +1546,21 @@ draw_rect_xywh_i :: proc (x, y, w, h: i32) {
 
 // Textured variants.
 
-draw_textured_rect_vec :: proc (channel: i32, pos, size: Vec2, src: Rect) {
+draw_textured_rect_vec :: proc (channel: int, pos, size: Vec2, src: Rect) {
 	draw_textured_rect_single(channel, {{pos, size}, src})
 }
-draw_textured_rect_xywh :: proc (channel: i32, x, y, w, h: f32, src: Rect) {
+draw_textured_rect_xywh :: proc (channel: int, x, y, w, h: f32, src: Rect) {
 	draw_textured_rect_single(channel, {{{x, y}, {w, h}}, src})
 }
-draw_textured_rect_vec_i :: proc (channel: i32, pos, size: Vec2i, src: Rect) {
+draw_textured_rect_vec_i :: proc (channel: int, pos, size: Vec2i, src: Rect) {
 	draw_textured_rect_single(channel, {rect_to_float({pos, size}), src})
 }
-draw_textured_rect_xywh_i :: proc (channel: i32, x, y, w, h: i32, src: Rect) {
+draw_textured_rect_xywh_i :: proc (channel: int, x, y, w, h: i32, src: Rect) {
 	draw_textured_rect_single(channel, {rect_to_float({{x, y}, {w, h}}), src})
 }
 
 // Draw textured rectangles in batch.
-draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
+draw_textured_rects :: proc (channel: int, rects: []Textured_Rect) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
@@ -1576,7 +1577,7 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 	if vertices == nil do return
 
 	// Get image info
-	image := _gp.state.texture.images[int(channel)]
+	image := _gp.state.texture.images[channel]
 	uv_scale := 1.0 / Vec2(get_image_size(image))
 
 	// Compute vertices
@@ -1619,16 +1620,14 @@ draw_textured_rects :: proc (channel: i32, rects: []Textured_Rect) {
 		vertices[i * 6 + 5] = {quad[2], vtexquad[2], color}
 	}
 
-	region := Region{lo, hi}
-
 	// Queue draw
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
-	_queue_draw(pipeline, region, vertex_index, total_vertices, .Triangles)
+	_queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles)
 }
 
 // Draw a single textured rectangle.
-draw_textured_rect_single :: proc (channel: i32, rect: Textured_Rect) {
+draw_textured_rect_single :: proc (channel: int, rect: Textured_Rect) {
 	draw_textured_rects(channel, {rect})
 }
 
@@ -1643,11 +1642,11 @@ draw_rects_i :: proc (rects: []Recti) {
 	}
 }
 
-draw_textured_rect_i :: proc (channel: i32, dst: Recti, src: Rect) {
+draw_textured_rect_i :: proc (channel: int, dst: Recti, src: Rect) {
 	draw_textured_rect_single(channel, {rect_to_float(dst), src})
 }
 
-draw_textured_rects_i :: proc (channel: i32, dst: []Recti, src: []Rect) {
+draw_textured_rects_i :: proc (channel: int, dst: []Recti, src: []Rect) {
 	assert(len(dst) == len(src))
 	for d, i in dst {
 		draw_textured_rect_single(channel, {rect_to_float(d), src[i]})

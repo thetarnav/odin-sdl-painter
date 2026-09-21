@@ -41,11 +41,8 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 
 	converted := false
 	if surface.format != pixel_format {
-		log.warnf(
-			"Converting image pixel format from %s to %s",
-			sdl.GetPixelFormatName(surface.format),
-			sdl.GetPixelFormatName(pixel_format),
-		)
+		log.warnf("Converting image pixel format from %s to %s",
+			sdl.GetPixelFormatName(surface.format), sdl.GetPixelFormatName(pixel_format))
 
 		inner_surface = sdl.ConvertSurface(surface, pixel_format)
 
@@ -82,8 +79,7 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 
 	handle, ok := hm.add(&_img_ctx.images, _Image{
 		texture = texture,
-		width   = u32(inner_surface.w),
-		height  = u32(inner_surface.h),
+		size    = {inner_surface.w, inner_surface.h}
 	})
 	if !ok {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
@@ -95,22 +91,21 @@ make_image :: proc (surface: ^sdl.Surface, allocator := context.allocator) -> Im
 
 	format_details := sdl.GetPixelFormatDetails(inner_surface.format)
 	bpp := format_details.bytes_per_pixel
-	size := uint(inner_surface.w) * uint(inner_surface.h) * uint(bpp)
+	size := int(inner_surface.w) * int(inner_surface.h) * int(bpp)
 
-	pixels_copy, alloc_err := mem.alloc(int(size), allocator = allocator)
+	pixels_copy, alloc_err := mem.alloc(size, allocator = allocator)
 	if alloc_err != .None || pixels_copy == nil {
 		sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 		hm.remove(&_img_ctx.images, handle)
 		_set_error(.Create_Image_Failed)
 		return {}
 	}
-	mem.copy(pixels_copy, inner_surface.pixels, int(size))
+	mem.copy(pixels_copy, inner_surface.pixels, size)
 
 	assert(len(_img_ctx.pending) < cap(_img_ctx.pending), "Increase IMAGE_MAX to create more images")
 	append(&_img_ctx.pending, _Image_Pending{
 		pixels = pixels_copy,
-		width  = u32(inner_surface.w),
-		height = u32(inner_surface.h),
+		size   = {inner_surface.w, inner_surface.h},
 		handle = handle,
 		bpp    = bpp,
 	})
@@ -141,19 +136,19 @@ get_image_gpu_texture :: proc (image: Image) -> ^sdl.GPUTexture {
 }
 
 // Get the width of an image in pixels. Returns 0 if the image is invalid.
-get_image_width :: proc (image: Image) -> i32 {
+get_image_width :: proc (image: Image) -> int {
 	assert(_img_ctx.initialized)
 
 	rec, ok := hm.get(&_img_ctx.images, image)
-	return i32(rec.width) if ok else 0
+	return int(rec.x) if ok else 0
 }
 
 // Get the height of an image in pixels. Returns 0 if the image is invalid.
-get_image_height :: proc (image: Image) -> i32 {
+get_image_height :: proc (image: Image) -> int {
 	assert(_img_ctx.initialized)
 
 	rec, ok := hm.get(&_img_ctx.images, image)
-	return i32(rec.height) if ok else 0
+	return int(rec.y) if ok else 0
 }
 
 // Get the size of an image in pixels as a vector. Returns {0, 0} if the image is invalid.
@@ -161,7 +156,7 @@ get_image_size :: proc (image: Image) -> Vec2i {
 	assert(_img_ctx.initialized)
 
 	rec, ok := hm.get(&_img_ctx.images, image)
-	return {i32(rec.width), i32(rec.height)} if ok else 0
+	return rec.size if ok else 0
 }
 
 // Discoverability alias for the size query; canonical form is get_image_size.
@@ -171,18 +166,16 @@ image_size :: get_image_size
 // ----------------------------------------------------------------------------
 
 _Image :: struct {
-	handle:  Image,
-	texture: ^sdl.GPUTexture,
-	width:   u32,
-	height:  u32,
+	using handle: Image,
+	texture:      ^sdl.GPUTexture,
+	using size:   Vec2i,
 }
 
 _Image_Pending :: struct {
-	pixels: rawptr,
-	width:  u32,
-	height: u32,
-	handle: Image,
-	bpp:    u8,
+	using handle: Image,
+	pixels:       rawptr,
+	using size:   Vec2i,
+	bpp:          u8,
 }
 
 _Image_Context :: struct {
@@ -191,7 +184,7 @@ _Image_Context :: struct {
 	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending, // Images that are pending to be uploaded to the GPU + 1 for
 		// the white texture for upload done during setup phase
 	texture_transfer_buffer:     ^sdl.GPUTransferBuffer,
-	texture_transfer_buffer_size: uint,
+	texture_transfer_buffer_size: int,
 	gpu_device:                  ^sdl.GPUDevice,
 	window:                      ^sdl.Window,
 }
@@ -252,9 +245,9 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 		return
 	}
 
-	total_size: uint = 0
+	total_size: int
 	for &pending in _img_ctx.pending {
-		total_size += uint(pending.width) * uint(pending.height) * uint(pending.bpp)
+		total_size += int(pending.x) * int(pending.y) * int(pending.bpp)
 	}
 
 	// If the total size of pending images exceeds the transfer buffer size, we
@@ -296,10 +289,10 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 	texture_transfer_ptr := sdl.MapGPUTransferBuffer(_img_ctx.gpu_device, _img_ctx.texture_transfer_buffer, false)
 
 	copy_pass := sdl.BeginGPUCopyPass(cmd_buffer)
-	offset: uint = 0
+	offset: int
 
 	for &pending in _img_ctx.pending {
-		size := u32(pending.width) * u32(pending.height) * u32(pending.bpp)
+		size := int(pending.x) * int(pending.y) * int(pending.bpp)
 
 		rec, ok := hm.get(&_img_ctx.images, pending.handle)
 		if !ok {
@@ -309,7 +302,7 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 			continue
 		}
 
-		mem.copy(mem.ptr_offset(cast([^]u8)texture_transfer_ptr, int(offset)), pending.pixels, int(size))
+		mem.copy(mem.ptr_offset(cast([^]u8)texture_transfer_ptr, offset), pending.pixels, size)
 
 		transfer_info := sdl.GPUTextureTransferInfo{
 			transfer_buffer = _img_ctx.texture_transfer_buffer,
@@ -318,14 +311,14 @@ _image_flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, allocator := context.al
 
 		region := sdl.GPUTextureRegion{
 			texture = rec.texture,
-			w       = pending.width,
-			h       = pending.height,
+			w       = u32(pending.x),
+			h       = u32(pending.y),
 			d       = 1,
 		}
 
 		sdl.UploadToGPUTexture(copy_pass, transfer_info, region, false)
 
-		offset += uint(size)
+		offset += size
 
 		mem.free(pending.pixels, allocator)
 		pending.pixels = nil
