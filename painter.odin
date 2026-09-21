@@ -404,17 +404,8 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 	// Nothing to draw
 	if end_command <= base_command do return true
 
-	if _gp.segments_flushed == 0 {
-		// Fast single-pass path: byte-identical to legacy behavior.
-		if !_flush_range(cmd_buffer, texture, base_command, end_command, base_vertex, end_vertex, true, true) {
-			return false
-		}
-	} else {
-		// Remainder of a multi-segment frame: earlier segments are already on
-		// the texture, so load (preserve) and restore segment-start state.
-		if !_flush_range(cmd_buffer, texture, base_command, end_command, base_vertex, end_vertex, false, false) {
-			return false
-		}
+	if !_flush_range(cmd_buffer, texture, base_command, end_command, base_vertex, end_vertex) {
+		return false
 	}
 
 	// Rewind frame scratch to base lengths now that upload + render are done.
@@ -439,18 +430,12 @@ _snapshot_segment_state :: proc () {
 }
 
 // Upload one vertex/command range and render it as its own render pass.
-// legacy_single=true reproduces the exact legacy single-pass behavior
-// (DONT_CARE, no state restore). Otherwise the first segment clears and
-// later segments load (preserving earlier segments) and re-emit the
-// segment-start viewport/scissor, since a new render pass starts clean.
 @(private)
 _flush_range :: proc (
 	cmd_buffer: ^sdl.GPUCommandBuffer,
 	texture: ^sdl.GPUTexture,
 	cmd_lo, cmd_hi: int,
 	vtx_lo, vtx_hi: int,
-	first_segment: bool,
-	legacy_single: bool,
 ) -> bool {
 	_image_flush(cmd_buffer)
 
@@ -495,20 +480,16 @@ _flush_range :: proc (
 	color_target_info := sdl.GPUColorTargetInfo{
 		texture     = texture,
 		clear_color = {0, 0, 0, 1},
-		load_op     = .DONT_CARE,
+		load_op     = .CLEAR if _gp.segments_flushed == 0 else .LOAD,
 		store_op    = .STORE,
 		cycle       = false,
-	}
-
-	if !legacy_single {
-		color_target_info.load_op = .CLEAR if first_segment else .LOAD
 	}
 
 	render_pass := sdl.BeginGPURenderPass(cmd_buffer, &color_target_info, 1, nil)
 
 	// New render pass: restore the segment-start viewport/scissor so draws
 	// issued before any state command in this segment land correctly.
-	if !legacy_single && !first_segment {
+	if _gp.segments_flushed > 0 {
 		x, y := **Vec2(_gp.seg_viewport.pos)
 		w, h := **Vec2(_gp.seg_viewport.size)
 		sdl.SetGPUViewport(render_pass, {x = x, y = y, w = w, h = h})
@@ -634,7 +615,7 @@ _flush_segment :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUText
 	base_uniform := _gp.state.base_uniform
 	base_vertex  := _gp.state.base_vertex
 
-	if !_flush_range(cmd_buffer, texture, base_command, len(_gp.commands), base_vertex, len(_gp.vertices), _gp.segments_flushed == 0, false) {
+	if !_flush_range(cmd_buffer, texture, base_command, len(_gp.commands), base_vertex, len(_gp.vertices)) {
 		return false
 	}
 
