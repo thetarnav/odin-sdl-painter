@@ -92,7 +92,7 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 	_ = sdl.SetGPUSwapchainParameters(_context.gpu_device, _context.window, .SDR, present_mode);
 
 	// Setup sdl.gp
-	gp.setup(&gp.Desc{
+	gp.setup({
 		window     = _context.window,
 		gpu_device = _context.gpu_device,
 	})

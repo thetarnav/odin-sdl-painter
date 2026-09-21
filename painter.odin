@@ -152,9 +152,8 @@ _find_or_create_pipeline :: proc (primitive_type: Primitive_Type, blend_mode: Bl
 
 // Setup painter context. Returns false if setup failed, use get_last_error()
 // to get more information about the error.
-setup :: proc (desc: ^Desc, allocator := context.allocator) -> bool {
+setup :: proc (desc: Desc, allocator := context.allocator) -> bool {
 	assert(!_gp.initialized)
-	assert(desc != nil)
 
 	_last_error = .None
 
