@@ -23,12 +23,12 @@ sample_sprite_render :: proc (delta_time_ms: u64) {
 
 	window_width, window_height: c.int
 	sdl.GetWindowSize(_context.window, &window_width, &window_height)
-	window := [2]int{int(window_width), int(window_height)}
+	window := Vec2{int(window_width), int(window_height)}
 
-	TILE :: [2]int{32, 32}
+	TILE :: Vec2{32, 32}
 
-	tile_region := [3]gp.Rect{
-		{{0, 0}, {32, 32}}, // tile 1
+	tile_region := [3]Rect{
+		{{0,  0}, {32, 32}}, // tile 1
 		{{32, 0}, {32, 32}}, // tile 2
 		{{64, 0}, {32, 32}}, // tile 3
 	}
@@ -42,7 +42,7 @@ sample_sprite_render :: proc (delta_time_ms: u64) {
 		y := rand.int_max(window.y)
 
 		src_rect := tile_region[i % 3]
-		dst_rect := gp.Rect{{f32(x), f32(y)}, gp.Vec2(TILE * 2)}
+		dst_rect := Rect{{f32(x), f32(y)}, gp.Vec2(TILE * 2)}
 
 		gp.draw_textured_rect(0, gp.Textured_Rect{dst_rect, src_rect})
 	}

@@ -28,7 +28,7 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 
 	// Draw a red filled rectangle.
 	{
-		gp.set_viewport(0, 0, i32(h.x), window_height)
+		gp.set_viewport(0, 0, h.x, window.y)
 		gp.set_color({10, 10, 10, 255})
 		gp.clear()
 
@@ -40,34 +40,30 @@ sample_rect_render :: proc (delta_time_ms: u64) {
 
 			half_shape := f32(window.x) * 0.15 // 15% of the viewport width
 
-			gp.draw_rect(gp.Rect{{-half_shape, -half_shape}, {half_shape * 2, half_shape * 2}})
+			gp.draw_rect(-half_shape, half_shape * 2)
 		}
 	}
 
 	// Draw a textured rectangle keeping it's original color.
 	{
-		gp.set_viewport(i32(h.x), 0, i32(h.x), window_height)
+		gp.set_viewport(h.x, 0, h.x, window.y)
 		gp.set_color({20, 20, 20, 255})
 		gp.clear()
 
 		gp.push_transform()
 		{
+			size := gp.Vec2(gp.get_image_size(image_rect))
+
 			gp.set_color(255)
 
 			// Move to the right area of the viewport
 			gp.translate(f32(h.x) * 0.5, f32(h.y))
 
 			gp.set_image(0, image_rect)
-
-			size := gp.get_image_size(image_rect)
-			sizef := gp.Vec2{f32(size.x), f32(size.y)}
-
-			scale := sizef * 2
-
-			gp.draw_textured_rect(0, gp.Textured_Rect{
-				src = {{0, 0}, sizef},
-				dst = {-scale/2, scale},
-			})
+			gp.draw_textured_rect(0,
+				src = {{0, 0}, size},
+				dst = {-size, size*2},
+			)
 		}
 		gp.pop_transform();
 	}

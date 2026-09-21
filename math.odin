@@ -67,3 +67,7 @@ transform_point :: proc "contextless" (m: Mat, p: Vec2) -> Vec2 {
 rect_to_float :: proc "contextless" (r: Recti) -> Rect {
 	return {Vec2(r.pos), Vec2(r.size)}
 }
+
+rect :: proc "contextless" (x, y, w, h: int) -> Recti {
+	return {{i32(x), i32(y)}, {i32(w), i32(h)}}
+}

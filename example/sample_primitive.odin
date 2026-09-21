@@ -25,7 +25,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 	// ===============================================================
 	// Draw points
 	{
-		gp.set_viewport(0, 0, i32(h.x), i32(h.y))
+		gp.set_viewport(0, 0, h.x, h.y)
 		gp.set_color({10, 10, 10, 255})
 		gp.clear()
 
@@ -43,7 +43,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 	// ===============================================================
 	// Triangles
 	{
-		gp.set_viewport(i32(h.x), 0, i32(h.x), i32(h.y))
+		gp.set_viewport(h.x, 0, h.x, h.y)
 		gp.set_color({20, 20, 20, 255})
 		gp.clear()
 
@@ -105,7 +105,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 	// ===============================================================
 	// Draw tiangles fans
 	{
-		gp.set_viewport(0, i32(h.y), i32(h.x), i32(h.y))
+		gp.set_viewport(0, h.y, h.x, h.y)
 		gp.set_color({20, 20, 20, 255})
 		gp.clear()
 
@@ -187,7 +187,7 @@ sample_primitive_render :: proc (delta_time_ms: u64) {
 	// ===============================================================
 	// Draw lines
 	{
-		gp.set_viewport(i32(h.x), i32(h.y), i32(h.x), i32(h.y))
+		gp.set_viewport(h.x, h.y, h.x, h.y)
 		gp.set_color({10, 10, 10, 255})
 		gp.clear()
 

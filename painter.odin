@@ -32,7 +32,7 @@ Uniform :: struct {
 }
 
 Texture_Uniform :: struct {
-	count:    u32,
+	count:    int,
 	images:   [TEXTURE_SLOTS_MAX]Image,
 	samplers: [TEXTURE_SLOTS_MAX]^sdl.GPUSampler,
 }
@@ -478,7 +478,7 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 			// Check if texture needs to be changed
 			image_bindings: [TEXTURE_SLOTS_MAX]sdl.GPUTextureSamplerBinding
 
-			for j in 0 ..< u32(TEXTURE_SLOTS_MAX) {
+			for j in 0 ..< TEXTURE_SLOTS_MAX {
 				image_id: Image
 
 				if j < draw.texture.count {
@@ -1137,12 +1137,12 @@ color_get   :: get_color
 color_reset :: reset_color
 
 // Sets current bound image in a texture channel.
-set_image :: proc (channel: i32, image: Image) {
+set_image :: proc (channel: int, image: Image) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
 
-	ch := int(channel)
+	ch := channel
 	if _gp.state.texture.images[ch] == image {
 		return
 	}
@@ -1150,7 +1150,7 @@ set_image :: proc (channel: i32, image: Image) {
 	_gp.state.texture.images[ch] = image
 
 	// Recalculate texture count
-	texture_count := int(_gp.state.texture.count)
+	texture_count := _gp.state.texture.count
 	for i := max(ch, texture_count - 1); i >= 0; i -= 1 {
 		if _gp.state.texture.images[i] != {} {
 			texture_count = i + 1
@@ -1158,12 +1158,12 @@ set_image :: proc (channel: i32, image: Image) {
 		}
 	}
 
-	_gp.state.texture.count = u32(texture_count)
+	_gp.state.texture.count = texture_count
 }
 
 // Reset current bound image in a texture channel to the default (white
 // texture).
-reset_image :: proc (channel: i32) {
+reset_image :: proc (channel: int) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
@@ -1175,7 +1175,7 @@ image_set   :: set_image
 image_reset :: reset_image
 
 // Remove current bound image from a texture channel (no texture).
-unset_image :: proc (channel: i32) {
+unset_image :: proc (channel: int) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
@@ -1184,7 +1184,7 @@ unset_image :: proc (channel: i32) {
 }
 
 // Set current bound sampler in a texture channel.
-set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
+set_sampler :: proc (channel: int, sampler: ^sdl.GPUSampler) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
@@ -1193,7 +1193,7 @@ set_sampler :: proc (channel: i32, sampler: ^sdl.GPUSampler) {
 }
 
 // Remove current bound sampler from a texture channel (no sampler).
-unset_sampler :: proc (channel: i32) {
+unset_sampler :: proc (channel: int) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
@@ -1203,7 +1203,7 @@ unset_sampler :: proc (channel: i32) {
 
 // Reset current bound sampler in a texture channel to default (nearest
 // sampler).
-reset_sampler :: proc (channel: i32) {
+reset_sampler :: proc (channel: int) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 	assert(channel >= 0 && channel < TEXTURE_SLOTS_MAX)
@@ -1215,11 +1215,17 @@ sampler_set   :: set_sampler
 sampler_reset :: reset_sampler
 
 // Set the screen are to draw to.
-set_viewport_xy :: proc (x, y, w, h: i32) {
+set_viewport_xy :: proc (x, y, w, h: int) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	viewport := Recti{{x, y}, {w, h}}
+	set_viewport(rect(x, y, w, h))
+}
+
+// Set the screen area to draw to from an integer rect (shares the body above).
+set_viewport_rect :: proc (viewport: Recti) {
+	assert(_gp.initialized)
+	assert(len(_gp.states) > 0)
 
 	// If no change in viewport, skip
 	if _gp.state.viewport == viewport {
@@ -1240,23 +1246,15 @@ set_viewport_xy :: proc (x, y, w, h: i32) {
 
 	// When viewport changes, scissor needs to be updated to keep the same region
 	if !(_gp.state.scissor.size.x < 0 && _gp.state.scissor.size.y < 0) {
-		_gp.state.scissor.pos += Vec2i{x, y} - _gp.state.viewport.pos
+		_gp.state.scissor.pos += viewport.pos - _gp.state.viewport.pos
 	}
 
-	_gp.state.viewport = viewport
-	_gp.state.thickness = max(1 / f32(w), 1 / f32(h))
-	fw := f32(w)
-	fh := f32(h)
-	_gp.state.projection = Mat{2 / fw, 0, -1, 0, -2 / fh, 1}
-	_gp.state.mvp = compose(_gp.state.projection, _gp.state.transform)
-}
+	size := Vec2(viewport.size)
 
-// Set the screen area to draw to from an integer rect (shares the body above).
-set_viewport_rect :: proc (r: Recti) {
-	assert(_gp.initialized)
-	assert(len(_gp.states) > 0)
-
-	set_viewport_xy(r.pos.x, r.pos.y, r.size.x, r.size.y)
+	_gp.state.viewport   = viewport
+	_gp.state.thickness  = max(1 / size.x, 1 / size.y)
+	_gp.state.projection = Mat{2 / size.x, 0, -1, 0, -2 / size.y, 1}
+	_gp.state.mvp        = compose(_gp.state.projection, _gp.state.transform)
 }
 
 set_viewport :: proc{set_viewport_xy, set_viewport_rect}
@@ -1266,18 +1264,24 @@ reset_viewport :: proc () {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	set_viewport(0, 0, _gp.state.frame_size.x, _gp.state.frame_size.y)
+	set_viewport({0, _gp.state.frame_size})
 }
 
 viewport_set   :: set_viewport
 viewport_reset :: reset_viewport
 
 // Set the clipping rectangle in the viewport.
-set_scissor_xy :: proc (x, y, w, h: i32) {
+set_scissor_xy :: proc (x, y, w, h: int) {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	scissor := Recti{{x, y}, {w, h}}
+	set_scissor(rect(x, y, w, h))
+}
+
+// Set the clipping rectangle from an integer rect (shares the body above).
+set_scissor_rect :: proc (scissor: Recti) {
+	assert(_gp.initialized)
+	assert(len(_gp.states) > 0)
 
 	// Skip if scissor is the same
 	if _gp.state.scissor == scissor {
@@ -1294,26 +1298,18 @@ set_scissor_xy :: proc (x, y, w, h: i32) {
 	}
 
 	// Coordinates scissor relative to viewport
-	viewport_scissor := Recti{_gp.state.viewport.pos + Vec2i{x, y}, {w, h}}
+	viewport_scissor := Recti{_gp.state.viewport.pos + scissor.pos, scissor.size}
 
 	// Reset scissor
-	if w < 0 && h < 0 {
-		viewport_scissor.pos = {0, 0}
-		viewport_scissor.size = {_gp.state.frame_size.x, _gp.state.frame_size.y}
+	if scissor.size.x < 0 && scissor.size.y < 0 {
+		viewport_scissor.pos  = 0
+		viewport_scissor.size = _gp.state.frame_size
 	}
 
 	cmd.cmd = .Scissor
 	cmd.args.scissor = viewport_scissor
 
 	_gp.state.scissor = scissor
-}
-
-// Set the clipping rectangle from an integer rect (shares the body above).
-set_scissor_rect :: proc (r: Recti) {
-	assert(_gp.initialized)
-	assert(len(_gp.states) > 0)
-
-	set_scissor_xy(r.pos.x, r.pos.y, r.size.x, r.size.y)
 }
 
 set_scissor :: proc{set_scissor_xy, set_scissor_rect}
@@ -1323,7 +1319,7 @@ reset_scissor :: proc () {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	_gp.state.scissor = Recti{{0, 0}, {-1, -1}}
+	_gp.state.scissor = {0, -1}
 }
 
 scissor_set   :: set_scissor
@@ -1535,6 +1531,11 @@ draw_rect_xywh :: proc (x, y, w, h: f32) {
 	draw_rect_single({{x, y}, {w, h}})
 }
 
+// Draw a single integer rect (converts once, shares the float queue path).
+draw_recti :: proc (rect: Recti) {
+	draw_rect_single(rect_to_float(rect))
+}
+
 // Integer variants.
 
 draw_rect_vec_i :: proc (pos, size: Vec2i) {
@@ -1552,10 +1553,10 @@ draw_textured_rect_vec :: proc (channel: int, pos, size: Vec2, src: Rect) {
 draw_textured_rect_xywh :: proc (channel: int, x, y, w, h: f32, src: Rect) {
 	draw_textured_rect_single(channel, {{{x, y}, {w, h}}, src})
 }
-draw_textured_rect_vec_i :: proc (channel: int, pos, size: Vec2i, src: Rect) {
+draw_textured_rect_veci :: proc (channel: int, pos, size: Vec2i, src: Rect) {
 	draw_textured_rect_single(channel, {rect_to_float({pos, size}), src})
 }
-draw_textured_rect_xywh_i :: proc (channel: int, x, y, w, h: i32, src: Rect) {
+draw_textured_rect_xywhi :: proc (channel: int, x, y, w, h: i32, src: Rect) {
 	draw_textured_rect_single(channel, {rect_to_float({{x, y}, {w, h}}), src})
 }
 
@@ -1631,30 +1632,12 @@ draw_textured_rect_single :: proc (channel: int, rect: Textured_Rect) {
 	draw_textured_rects(channel, {rect})
 }
 
-// Draw a single integer rect (converts once, shares the float queue path).
-draw_rect_i :: proc (rect: Recti) {
-	draw_rect_single(rect_to_float(rect))
-}
-
-draw_rects_i :: proc (rects: []Recti) {
-	for rect in rects {
-		draw_rect_single(rect_to_float(rect))
-	}
-}
-
-draw_textured_rect_i :: proc (channel: int, dst: Recti, src: Rect) {
-	draw_textured_rect_single(channel, {rect_to_float(dst), src})
-}
-
-draw_textured_rects_i :: proc (channel: int, dst: []Recti, src: []Rect) {
-	assert(len(dst) == len(src))
-	for d, i in dst {
-		draw_textured_rect_single(channel, {rect_to_float(d), src[i]})
-	}
+draw_textured_rect_single_dst_src :: proc (channel: int, dst, src: Rect) {
+	draw_textured_rect_single(channel, {dst, src})
 }
 
 draw_point         :: proc {draw_point_single, draw_points}
 draw_line          :: proc {draw_line_single, draw_lines, draw_line_strip}
 draw_triangle      :: proc {draw_triangle_single, draw_triangles, draw_triangle_strip}
-draw_rect          :: proc {draw_rect_single, draw_rects, draw_rect_i, draw_rects_i, draw_rect_vec, draw_rect_xywh, draw_rect_vec_i, draw_rect_xywh_i}
-draw_textured_rect :: proc {draw_textured_rect_single, draw_textured_rects, draw_textured_rect_i, draw_textured_rects_i, draw_textured_rect_vec, draw_textured_rect_xywh, draw_textured_rect_vec_i, draw_textured_rect_xywh_i}
+draw_rect          :: proc {draw_rect_single, draw_rects, draw_recti, draw_rect_vec, draw_rect_xywh, draw_rect_vec_i, draw_rect_xywh_i}
+draw_textured_rect :: proc {draw_textured_rect_single, draw_textured_rect_single_dst_src, draw_textured_rects, draw_textured_rect_vec, draw_textured_rect_xywh, draw_textured_rect_veci, draw_textured_rect_xywhi}

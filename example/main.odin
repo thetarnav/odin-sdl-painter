@@ -6,6 +6,9 @@ import "core:log"
 import sdl "vendor:sdl3"
 import gp ".."
 
+Rect :: gp.Rect
+Vec2 :: [2]int
+
 /*
  * NOTE: use arrow keys to switch between samples
  */
