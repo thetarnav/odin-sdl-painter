@@ -666,14 +666,14 @@ begin_render_texture :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render
 	assert(_gp.initialized)
 	assert(cmd_buffer != nil)
 
-	gpu_texture := get_image_gpu_texture(Image(texture))
+	gpu_texture := get_image_gpu_texture(texture)
 	if gpu_texture == nil {
 		_set_error(.Invalid_Render_Texture)
 		return false
 	}
 
 	// Nested begin cannot fail post-setup; on failure unwind both stacks.
-	if !begin(get_image_size(Image(texture)), cmd_buffer, gpu_texture) {
+	if !begin(get_image_size(texture), cmd_buffer, gpu_texture) {
 		_gp.state = pop(&_gp.states)
 		pop(&_gp.frame_targets)
 		return false
@@ -684,25 +684,16 @@ begin_render_texture :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render
 }
 
 // Flush the current render-texture scope to its texture and close the scope.
-// The enclosing scope's target state is restored by end(); sampling texture
-// is valid only after this returns.
-end_render_texture :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render_Texture) -> (ok: bool) {
+// The enclosing scope's target state is restored by end()
+// sampling texture is valid only after this returns.
+end_render_texture :: proc () -> (ok: bool) {
 	assert(_gp.initialized)
-	assert(cmd_buffer != nil)
 	assert(len(_gp.states) > 0)
 	assert(len(_gp.frame_targets) > 0)
 
 	frame := _current_frame()
-	gpu_texture := get_image_gpu_texture(Image(texture))
-	if gpu_texture == nil || gpu_texture != frame.texture || texture != frame.active {
-		_set_error(.Invalid_Render_Texture)
-		ok = false
-	} else {
-		ok = flush(cmd_buffer, gpu_texture)
-	}
+	ok = flush(frame.cmd_buffer, frame.texture)
 
-	// Always unwind the scope so a failed flush cannot strand later draws in
-	// the wrong target.
 	end()
 
 	return ok
@@ -710,6 +701,11 @@ end_render_texture :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render_T
 
 render_texture_begin :: begin_render_texture
 render_texture_end   :: end_render_texture
+
+@(deferred_none=render_texture_end)
+render_texture_scope :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render_Texture) {
+	render_texture_begin(cmd_buffer, texture)
+}
 
 // Painter (Private): batching internals
 // ----------------------------------------------------------------------------

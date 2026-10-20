@@ -101,7 +101,7 @@ draw_nested_frame :: proc (opacity: f32) {
 	})
 	gp.reset_image(0)
 
-	if !gp.end_render_texture(cmd_buffer, render_texture) {
+	if !gp.end_render_texture() {
 		log.errorf("nested frame error: %s", gp.get_error_message(gp.get_last_error()))
 		return
 	}
