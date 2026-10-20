@@ -10,6 +10,7 @@ Adapted from [SDL_gp](https://github.com/n67094/SDL_gp).
 - Transform stack (`push_transform`, `translate`, `rotate`, `scale`)
 - Custom pipelines with uniforms, blend modes, viewports, scissors
 - Image management with mid-frame creation support
+- Render textures (`Render_Texture`, `make_render_texture`, `begin/end_render_texture`)
 
 ## Usage
 

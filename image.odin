@@ -9,13 +9,13 @@
 // needed.
 package sdl_painter
 
-import "core:slice"
-import sdl "vendor:sdl3"
 import "base:builtin"
-import c "core:c"
+import "core:c"
+import "core:slice"
 import "core:log"
 import "core:mem"
 import hm "core:container/handle_map"
+import sdl "vendor:sdl3"
 
 Sampler :: enum u32 {
 	Point_Clamp,
@@ -27,6 +27,11 @@ Sampler :: enum u32 {
 #assert(len(Sampler) == 4, "Sampler must stay four entries")
 
 Image :: distinct hm.Handle32
+
+// A render texture is an Image that can also be used as a render target.
+Render_Texture :: struct {using image: Image}
+
+#assert(size_of(Render_Texture) == size_of(Image))
 
 // Create an image from an sdl.Surface. Returns an invalid image if creation
 // failed, use GetLastError() to get more information about the error.
@@ -57,20 +62,7 @@ make_image_from_surface :: proc (surface: ^sdl.Surface) -> (image: Image, ok: bo
 		sdl.DestroySurface(inner_surface)
 	}
 
-	texture_create_info := sdl.GPUTextureCreateInfo{
-		type                 = .D2,
-		format               = texture_format,
-		usage                = {.SAMPLER},
-		width                = u32(inner_surface.w),
-		height               = u32(inner_surface.h),
-		layer_count_or_depth = 1,
-		num_levels           = 1,
-		sample_count         = ._1,
-	}
-
-	texture := sdl.CreateGPUTexture(_img_ctx.gpu_device, texture_create_info)
-	if texture == nil do return
-
+	texture := _create_gpu_texture(texture_format, {inner_surface.w, inner_surface.h}, {.SAMPLER}) or_return
 	defer if !ok do sdl.ReleaseGPUTexture(_img_ctx.gpu_device, texture)
 
 	// Insert image record into the map; exhaustion keeps the sticky-error contract.
@@ -79,7 +71,6 @@ make_image_from_surface :: proc (surface: ^sdl.Surface) -> (image: Image, ok: bo
 		texture = texture,
 		size    = {inner_surface.w, inner_surface.h}
 	}) or_return
-
 	defer if !ok do hm.remove(&_img_ctx.images, image)
 
 	// Create a pending image to be flushed later
@@ -132,6 +123,50 @@ make_image_from_pixels :: proc(
 	return make_image_from_surface(transient)
 }
 
+// Create a render texture of the given size in the swapchain texture format.
+// The texture is usable both as a render target (via begin_render_texture)
+// and as a sampled image. Its contents are undefined until first rendered:
+// clear it in the opening nested pass before sampling it.
+make_render_texture :: proc (size: Vec2i) -> (texture: Render_Texture, ok: bool) {
+	assert(_img_ctx.initialized)
+
+	defer if !ok do _set_error(.Create_Image_Failed)
+
+	if size.x <= 0 || size.y <= 0 do return
+
+	texture_format := sdl.GetGPUSwapchainTextureFormat(_img_ctx.gpu_device, _img_ctx.window)
+
+	gpu_texture := _create_gpu_texture(texture_format, size, {.COLOR_TARGET, .SAMPLER}) or_return
+	defer if !ok do sdl.ReleaseGPUTexture(_img_ctx.gpu_device, gpu_texture)
+
+	image := hm.add(&_img_ctx.images, _Image{
+		texture = gpu_texture,
+		size    = size,
+	}) or_return
+	defer if !ok do hm.remove(&_img_ctx.images, image)
+
+	return transmute(Render_Texture)image, true
+}
+
+// Destroy a render texture and free its resources.
+destroy_render_texture :: proc(texture: Render_Texture) {
+	destroy_image(texture)
+}
+
+// Get the size of a render texture in pixels. Returns {0, 0} if invalid.
+get_render_texture_size :: proc(texture: Render_Texture) -> Vec2i {
+	return get_image_size(texture)
+}
+
+// Get the GPU texture behind a render texture. Returns nil if invalid.
+get_render_texture_gpu_texture :: proc(texture: Render_Texture) -> ^sdl.GPUTexture {
+	return get_image_gpu_texture(texture)
+}
+
+render_texture_destroy     :: destroy_render_texture
+render_texture_size        :: get_render_texture_size
+render_texture_gpu_texture :: get_render_texture_gpu_texture
+
 // Destroy an image and free its resources.
 destroy_image :: proc (image: Image) {
 	assert(_img_ctx.initialized)
@@ -182,6 +217,28 @@ image_size :: get_image_size
 // Image (Private)
 // ----------------------------------------------------------------------------
 
+_create_gpu_texture :: proc(
+	format: sdl.GPUTextureFormat,
+	size:   Vec2i,
+	usage:  sdl.GPUTextureUsageFlags,
+) -> (tex: ^sdl.GPUTexture, ok: bool) {
+	assert(_img_ctx.initialized)
+
+	if size.x <= 0 || size.y <= 0 do return nil, false
+
+	tex = sdl.CreateGPUTexture(_img_ctx.gpu_device, sdl.GPUTextureCreateInfo{
+		type                 = .D2,
+		format               = format,
+		usage                = usage,
+		width                = u32(size.x),
+		height               = u32(size.y),
+		layer_count_or_depth = 1,
+		num_levels           = 1,
+		sample_count         = ._1,
+	})
+	return tex, tex != nil
+}
+
 _Image :: struct {
 	using handle: Image,
 	texture:      ^sdl.GPUTexture,
@@ -198,10 +255,10 @@ _Image_Pending :: struct {
 _Image_Context :: struct {
 	initialized:                 bool,
 	allocator:                   mem.Allocator, // stored once at setup; all staging alloc/free reads this
-	images:                      hm.Static_Handle_Map(IMAGE_MAX + 1, _Image, Image), // +1 white slot
+	images:                      hm.Static_Handle_Map(IMAGE_MAX+1, _Image, Image), // +1 white slot
 	// Images that are pending to be uploaded to the GPU + 1
 	// for the white texture for upload done during setup phase
-	pending:                     [dynamic; IMAGE_MAX + 1]_Image_Pending,
+	pending:                     [dynamic; IMAGE_MAX+1]_Image_Pending,
 	texture_transfer_buffer:     ^sdl.GPUTransferBuffer,
 	texture_transfer_buffer_size: int,
 	gpu_device:                  ^sdl.GPUDevice,

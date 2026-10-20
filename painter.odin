@@ -92,6 +92,27 @@ _Command :: struct {
 	args: _Command_Args,
 }
 
+// Saved per-scope render-target state. One record per begin() scope; the top
+// record is the current render target. Raw begin/end push and pop it in
+// lockstep with the state stack, so no target state needs duplicating in _Gp.
+_Frame_Target :: struct {
+	cmd_buffer:       ^sdl.GPUCommandBuffer,
+	texture:          ^sdl.GPUTexture,
+	// Bound render texture ({} when drawing to a plain texture such as the
+	// swapchain). Sampling the active render texture inside its own scope is
+	// a feedback loop and is rejected (see _queue_draw).
+	active:           Render_Texture,
+	segments_flushed: int, // generation counter; 0 selects CLEAR vs LOAD
+	seg_viewport:     Recti, // resolved viewport/scissor at current segment start
+	seg_scissor:      Recti,
+}
+
+@(private)
+_current_frame :: proc () -> ^_Frame_Target {
+	assert(len(_gp.frame_targets) > 0)
+	return &_gp.frame_targets[len(_gp.frame_targets)-1]
+}
+
 _Gp :: struct {
 	initialized:            bool,
 	allocator:              mem.Allocator, // stored once at setup; shutdown deletes read this
@@ -121,13 +142,10 @@ _Gp :: struct {
 	// Desc Uniforms stack
 	uniforms: [dynamic]Uniform,
 
-	// Mid-frame segmentation (auto-flush-and-retry).
-	// Stashed from begin() args; nil handles mean legacy sticky-error behavior.
-	frame_cmd_buffer: ^sdl.GPUCommandBuffer,
-	frame_texture:    ^sdl.GPUTexture,
-	segments_flushed: int,   // generation counter; 0 selects CLEAR vs LOAD
-	seg_viewport:     Recti, // resolved viewport/scissor at current segment start
-	seg_scissor:      Recti,
+	// Mid-frame segmentation (auto-flush-and-retry). One record per begin()
+	// scope; the top record is the current render target. Stashed handles are
+	// nil when begin() was called without them: legacy sticky-error behavior.
+	frame_targets: [dynamic; STATE_MAX]_Frame_Target,
 }
 
 _gp: _Gp
@@ -352,17 +370,19 @@ begin :: proc (size: Vec2i, cmd_buffer: ^sdl.GPUCommandBuffer = nil, texture: ^s
 
 	_gp.state.frame_size = size
 	_gp.state.viewport   = {0, size}
-	_gp.state.scissor    = {0, {-1, -1}}
-	_gp.state.color      = {255, 255, 255, 255}
+	_gp.state.scissor    = {0, -1}
+	_gp.state.color      = 255
 
 	_gp.state.thickness    = max(1.0 / w, 1.0 / h)
 	_gp.state.base_vertex  = len(_gp.vertices)
 	_gp.state.base_uniform = len(_gp.uniforms)
 	_gp.state.base_command = len(_gp.commands)
 
-	_gp.frame_cmd_buffer = cmd_buffer
-	_gp.frame_texture    = texture
-	_gp.segments_flushed = 0
+	assert(len(_gp.frame_targets) < cap(_gp.frame_targets))
+	append(&_gp.frame_targets, _Frame_Target{
+		cmd_buffer = cmd_buffer,
+		texture    = texture,
+	})
 	_snapshot_segment_state()
 
 	return true
@@ -415,11 +435,14 @@ flush :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUTexture) -> b
 // viewport bounds, otherwise scissor is viewport-relative.
 @(private)
 _snapshot_segment_state :: proc () {
-	_gp.seg_viewport = _gp.state.viewport
+	// Fresh frame records are zero-valued, so segments_flushed already starts
+	// at 0 (first segment clears); only the viewport/scissor need capturing.
+	frame := _current_frame()
+	frame.seg_viewport = _gp.state.viewport
 	if _gp.state.scissor.size.x < 0 && _gp.state.scissor.size.y < 0 {
-		_gp.seg_scissor = Recti{0, _gp.state.frame_size}
+		frame.seg_scissor = Recti{0, _gp.state.frame_size}
 	} else {
-		_gp.seg_scissor = Recti{_gp.state.viewport.pos + _gp.state.scissor.pos, _gp.state.scissor.size}
+		frame.seg_scissor = Recti{_gp.state.viewport.pos + _gp.state.scissor.pos, _gp.state.scissor.size}
 	}
 }
 
@@ -474,20 +497,23 @@ _flush_range :: proc (
 	color_target_info := sdl.GPUColorTargetInfo{
 		texture     = texture,
 		clear_color = {0, 0, 0, 1},
-		load_op     = .CLEAR if _gp.segments_flushed == 0 else .LOAD,
+		load_op     = .CLEAR if _current_frame().segments_flushed == 0 else .LOAD,
 		store_op    = .STORE,
-		cycle       = false,
+		// Cycling is only valid when the load op discards previous contents.
+		// On a CLEAR pass it renames a still-bound texture; when the texture
+		// isn't bound yet it is a no-op, so no reuse tracking is needed.
+		cycle       = _current_frame().segments_flushed == 0,
 	}
 
 	render_pass := sdl.BeginGPURenderPass(cmd_buffer, &color_target_info, 1, nil)
 
 	// New render pass: restore the segment-start viewport/scissor so draws
 	// issued before any state command in this segment land correctly.
-	if _gp.segments_flushed > 0 {
-		x, y := **Vec2(_gp.seg_viewport.pos)
-		w, h := **Vec2(_gp.seg_viewport.size)
+	if _current_frame().segments_flushed > 0 {
+		x, y := **Vec2(_current_frame().seg_viewport.pos)
+		w, h := **Vec2(_current_frame().seg_viewport.size)
 		sdl.SetGPUViewport(render_pass, {x = x, y = y, w = w, h = h})
-		sdl.SetGPUScissor(render_pass, {**_gp.seg_scissor.pos, **_gp.seg_scissor.size})
+		sdl.SetGPUScissor(render_pass, {**_current_frame().seg_scissor.pos, **_current_frame().seg_scissor.size})
 	}
 
 	cur_pipeline_id   := transmute(Pipeline)max(u32)
@@ -617,7 +643,7 @@ _flush_segment :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUText
 	resize(&_gp.uniforms, base_uniform)
 	resize(&_gp.vertices, base_vertex)
 
-	_gp.segments_flushed += 1
+	_current_frame().segments_flushed += 1
 	_snapshot_segment_state()
 
 	return true
@@ -626,12 +652,64 @@ _flush_segment :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: ^sdl.GPUText
 // End recording draw calls for the current frame.
 end :: proc () {
 	assert(_gp.initialized)
-
-	_gp.frame_cmd_buffer = nil
-	_gp.frame_texture    = nil
+	assert(len(_gp.states) > 0)
+	assert(len(_gp.frame_targets) > 0)
 
 	_gp.state = pop(&_gp.states)
+	pop(&_gp.frame_targets)
 }
+
+// Begin a nested render-texture scope. Records subsequent draws into texture
+// until end_render_texture. The nested scope starts from default painter
+// state; sampling texture inside its own scope is rejected (see _queue_draw).
+begin_render_texture :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render_Texture) -> (ok: bool) {
+	assert(_gp.initialized)
+	assert(cmd_buffer != nil)
+
+	gpu_texture := get_image_gpu_texture(Image(texture))
+	if gpu_texture == nil {
+		_set_error(.Invalid_Render_Texture)
+		return false
+	}
+
+	// Nested begin cannot fail post-setup; on failure unwind both stacks.
+	if !begin(get_image_size(Image(texture)), cmd_buffer, gpu_texture) {
+		_gp.state = pop(&_gp.states)
+		pop(&_gp.frame_targets)
+		return false
+	}
+	_current_frame().active = texture
+
+	return true
+}
+
+// Flush the current render-texture scope to its texture and close the scope.
+// The enclosing scope's target state is restored by end(); sampling texture
+// is valid only after this returns.
+end_render_texture :: proc (cmd_buffer: ^sdl.GPUCommandBuffer, texture: Render_Texture) -> (ok: bool) {
+	assert(_gp.initialized)
+	assert(cmd_buffer != nil)
+	assert(len(_gp.states) > 0)
+	assert(len(_gp.frame_targets) > 0)
+
+	frame := _current_frame()
+	gpu_texture := get_image_gpu_texture(Image(texture))
+	if gpu_texture == nil || gpu_texture != frame.texture || texture != frame.active {
+		_set_error(.Invalid_Render_Texture)
+		ok = false
+	} else {
+		ok = flush(cmd_buffer, gpu_texture)
+	}
+
+	// Always unwind the scope so a failed flush cannot strand later draws in
+	// the wrong target.
+	end()
+
+	return ok
+}
+
+render_texture_begin :: begin_render_texture
+render_texture_end   :: end_render_texture
 
 // Painter (Private): batching internals
 // ----------------------------------------------------------------------------
@@ -645,7 +723,7 @@ _next_uniform :: proc () -> ^Uniform {
 	// A single slot always fits after one segment flush unless the whole
 	// budget is gone; without stashed handles fall through to the error.
 	if 1 <= cap(_gp.uniforms) - _gp.state.base_uniform &&
-	   _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) &&
+	   _flush_segment(_current_frame().cmd_buffer, _current_frame().texture) &&
 	   len(_gp.uniforms) < cap(_gp.uniforms) {
 		resize(&_gp.uniforms, len(_gp.uniforms) + 1)
 		return &_gp.uniforms[len(_gp.uniforms) - 1]
@@ -675,7 +753,7 @@ _next_vertices :: proc (count: int) -> [^]Vertex {
 		_set_error(.Vertices_Full)
 		return nil
 	}
-	if _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) {
+	if _flush_segment(_current_frame().cmd_buffer, _current_frame().texture) {
 		base = len(_gp.vertices)
 		if base + count <= cap(_gp.vertices) {
 			resize(&_gp.vertices, base + count)
@@ -695,7 +773,7 @@ _next_command :: proc () -> ^_Command {
 	// A single slot always fits after one segment flush unless the whole
 	// budget is gone; without stashed handles fall through to the error.
 	if 1 <= cap(_gp.commands) - _gp.state.base_command &&
-	   _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) &&
+	   _flush_segment(_current_frame().cmd_buffer, _current_frame().texture) &&
 	   len(_gp.commands) < cap(_gp.commands) {
 		resize(&_gp.commands, len(_gp.commands) + 1)
 		return &_gp.commands[len(_gp.commands) - 1]
@@ -880,12 +958,12 @@ _merge_draw_commands :: proc (
 		assert(inter_cmd_count > 0)
 
 		// Append new draw command
-		gen := _gp.segments_flushed
+		gen := _current_frame().segments_flushed
 		cmd := _next_command()
 		if cmd == nil {
 			return false
 		}
-		if _gp.segments_flushed != gen {
+		if _current_frame().segments_flushed != gen {
 			// _next_command flushed a segment and rewound frame scratch:
 			// prev_cmd/inter_cmds dangle and the fresh slot belongs to the
 			// new segment. Abort the merge without an error; the queue path
@@ -956,7 +1034,20 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 		return true // handled: culled, nothing to queue
 	}
 
-	gen := _gp.segments_flushed
+	// Sampling the active render texture inside its own scope would read and
+	// write the same texture in one pass. Sample it only after its scope ends.
+	if _current_frame().active != {} {
+		active := Image(_current_frame().active)
+		for image in _gp.state.texture.images {
+			if image == active {
+				resize(&_gp.vertices, vertex_index) // rollback allocated vertices
+				_set_error(.Invalid_Render_Texture)
+				return false
+			}
+		}
+	}
+
+	gen := _current_frame().segments_flushed
 
 	// Try to merge with previous draw command
 	if primitive_type != .Triangle_Strip &&
@@ -965,7 +1056,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 		return true
 	}
 
-	if _gp.segments_flushed != gen {
+	if _current_frame().segments_flushed != gen {
 		// A segment flushed inside the merge path and rewound frame scratch,
 		// discarding this draw's vertices. No error is set: the caller must
 		// re-reserve and retry (see retry loops in the draw sites).
@@ -978,7 +1069,7 @@ _queue_draw :: proc (pipeline: Pipeline, region: Region, vertex_index, vertices_
 	need_uniform := uniform != nil && len(_gp.uniforms) >= cap(_gp.uniforms)
 	need_command := len(_gp.commands) >= cap(_gp.commands)
 	if need_uniform || need_command {
-		if _flush_segment(_gp.frame_cmd_buffer, _gp.frame_texture) {
+		if _flush_segment(_current_frame().cmd_buffer, _current_frame().texture) {
 			return false // room is free now, but vertices were rewound: caller retries
 		}
 		resize(&_gp.vertices, vertex_index) // rollback allocated vertices
@@ -1042,7 +1133,7 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 	// scratch (false with no error). Regenerating vertices is idempotent,
 	// so the draw is never dropped. Two attempts suffice (see _queue_draw).
 	for _ in 0 ..< 2 {
-		gen := _gp.segments_flushed
+		gen := _current_frame().segments_flushed
 
 		// Setup vertices (index AFTER reservation: a flush inside
 		// _next_vertices rewinds the array and moves the base).
@@ -1069,7 +1160,7 @@ _draw_solid :: proc (primitive_type: Primitive_Type, vertices: []Vec2) {
 
 		// Queue draw
 		if _queue_draw(pipeline, {lo, hi}, vertex_index, vertices_count, primitive_type) do return
-		if _last_error != .None || _gp.segments_flushed == gen do return
+		if _last_error != .None || _current_frame().segments_flushed == gen do return
 	}
 }
 
@@ -1545,7 +1636,7 @@ clear :: proc () {
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
 	for _ in 0 ..< 2 {
-		gen := _gp.segments_flushed
+		gen := _current_frame().segments_flushed
 
 		// Setup vertices
 		vertices_count := 6
@@ -1572,7 +1663,7 @@ clear :: proc () {
 		v[5] = {quad[0], texcoord, color}
 
 		if _queue_draw(pipeline, {-1, 1}, vertex_index, vertices_count, .Triangles) do return
-		if _last_error != .None || _gp.segments_flushed == gen do return
+		if _last_error != .None || _current_frame().segments_flushed == gen do return
 	}
 }
 
@@ -1586,7 +1677,7 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 	pipeline := _find_or_create_pipeline(primitive_type, _gp.state.blend_mode)
 
 	for _ in 0 ..< 2 {
-		gen := _gp.segments_flushed
+		gen := _current_frame().segments_flushed
 
 		// Setup vertices
 		vertices_count := len(vertices)
@@ -1614,7 +1705,7 @@ draw :: proc (primitive_type: Primitive_Type, vertices: []Vertex) {
 
 		// Queue draw
 		if _queue_draw(pipeline, region, vertex_index, vertices_count, primitive_type) do return
-		if _last_error != .None || _gp.segments_flushed == gen do return
+		if _last_error != .None || _current_frame().segments_flushed == gen do return
 	}
 }
 
@@ -1675,7 +1766,7 @@ draw_rects :: proc (rects: []Rect) {
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
 	for _ in 0 ..< 2 {
-		gen := _gp.segments_flushed
+		gen := _current_frame().segments_flushed
 
 		// Setup vertices
 		total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
@@ -1724,7 +1815,7 @@ draw_rects :: proc (rects: []Rect) {
 		}
 
 		if _queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles) do return
-		if _last_error != .None || _gp.segments_flushed == gen do return
+		if _last_error != .None || _current_frame().segments_flushed == gen do return
 	}
 }
 
@@ -1790,7 +1881,7 @@ draw_textured_rects :: proc (channel: int, rects: []Textured_Rect) {
 	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
 
 	for _ in 0 ..< 2 {
-		gen := _gp.segments_flushed
+		gen := _current_frame().segments_flushed
 
 		// Setup vertices
 		total_vertices := len(rects) * 6 // 2 triangles per rect, 3 vertices each
@@ -1840,7 +1931,7 @@ draw_textured_rects :: proc (channel: int, rects: []Textured_Rect) {
 		}
 
 		if _queue_draw(pipeline, {lo, hi}, vertex_index, total_vertices, .Triangles) do return
-		if _last_error != .None || _gp.segments_flushed == gen do return
+		if _last_error != .None || _current_frame().segments_flushed == gen do return
 	}
 }
 

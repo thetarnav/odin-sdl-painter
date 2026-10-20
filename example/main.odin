@@ -26,6 +26,7 @@ Sample_Type :: enum {
 	Sprite,
 	Load_Images,
 	Overflow,
+	Render_Texture,
 }
 _current_test := Sample_Type.Rect
 
@@ -105,6 +106,7 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 	sample_sprite_setup()
 	sample_load_images_setup()
 	sample_overflow_setup()
+	sample_render_texture_setup()
 
 	sdl.srand(0)
 
@@ -133,13 +135,14 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 		gp.set_color({0, 0, 0, 255})
 		gp.clear()
 
-		switch (_current_test) {
-		case .Rect:        sample_rect_render(DELTA_TIME_MS)
-		case .Primitive:   sample_primitive_render(DELTA_TIME_MS)
-		case .Sprite:      sample_sprite_render(DELTA_TIME_MS)
-		case .Blend:       sample_blend_render(DELTA_TIME_MS)
-		case .Load_Images: sample_load_images_render(DELTA_TIME_MS)
-		case .Overflow:    sample_overflow_render(DELTA_TIME_MS)
+		switch _current_test {
+		case .Rect:           sample_rect_render(DELTA_TIME_MS)
+		case .Primitive:      sample_primitive_render(DELTA_TIME_MS)
+		case .Sprite:         sample_sprite_render(DELTA_TIME_MS)
+		case .Blend:          sample_blend_render(DELTA_TIME_MS)
+		case .Load_Images:    sample_load_images_render(DELTA_TIME_MS)
+		case .Overflow:       sample_overflow_render(DELTA_TIME_MS)
+		case .Render_Texture: sample_render_texture_render(DELTA_TIME_MS, cmd_buffer)
 		}
 
 		if gp.get_last_error() != .None {
@@ -186,6 +189,7 @@ app_quit :: proc "c" (appstate: rawptr, result: sdl.AppResult) {
 	sample_sprite_shutdown()
 	sample_load_images_shutdown()
 	sample_overflow_shutdown()
+	sample_render_texture_shutdown()
 
 	gp.shutdown()
 

@@ -23,6 +23,7 @@ Error :: enum u32 {
 	Flush_Failed,
 	Acquire_Command_Buffer_Failed,
 	Acquire_Swapchain_Texture_Failed,
+	Invalid_Render_Texture,
 }
 
 // Error handling (Private)
@@ -64,6 +65,7 @@ get_error_message :: proc (error: Error) -> string {
 	case .Flush_Failed:                     return "Failed to flush painter"
 	case .Acquire_Command_Buffer_Failed:    return "Failed to acquire GPU command buffer"
 	case .Acquire_Swapchain_Texture_Failed: return "Failed to acquire swapchain texture"
+	case .Invalid_Render_Texture:           return "Invalid render texture"
 	}
 	return "Unknown error"
 }
