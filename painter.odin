@@ -494,15 +494,14 @@ _flush_range :: proc (
 	// Render pass
 	// ------------------------------
 
+	frame := _current_frame()
+
 	color_target_info := sdl.GPUColorTargetInfo{
 		texture     = texture,
-		clear_color = {0, 0, 0, 1},
-		load_op     = .CLEAR if _current_frame().segments_flushed == 0 else .LOAD,
+		clear_color = {0, 0, 0, 0} if frame.active != {} else {0, 0, 0, 1},
+		load_op     = .CLEAR if frame.segments_flushed == 0 else .LOAD,
 		store_op    = .STORE,
-		// Cycling is only valid when the load op discards previous contents.
-		// On a CLEAR pass it renames a still-bound texture; when the texture
-		// isn't bound yet it is a no-op, so no reuse tracking is needed.
-		cycle       = _current_frame().segments_flushed == 0,
+		cycle       = frame.segments_flushed == 0,
 	}
 
 	render_pass := sdl.BeginGPURenderPass(cmd_buffer, &color_target_info, 1, nil)
@@ -1629,7 +1628,7 @@ clear :: proc () {
 	assert(_gp.initialized)
 	assert(len(_gp.states) > 0)
 
-	pipeline := _find_or_create_pipeline(.Triangles, _gp.state.blend_mode)
+	pipeline := _find_or_create_pipeline(.Triangles, .None)
 
 	for _ in 0 ..< 2 {
 		gen := _current_frame().segments_flushed

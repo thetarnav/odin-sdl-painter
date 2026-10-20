@@ -38,6 +38,9 @@ sample_render_texture_render :: proc (dt: u64, cmd_buffer: ^sdl.GPUCommandBuffer
 
 	gp.set_blend_mode(.Blend)
 
+	gp.set_color({90, 10, 160, 255})
+	gp.clear()
+
 	for i in 0..<RENDER_TEXTURE_FRAMES {
 		opacity := f32(RENDER_TEXTURE_FRAMES-i) / RENDER_TEXTURE_FRAMES
 		gp.translate(10, 30)
