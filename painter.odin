@@ -345,6 +345,11 @@ shutdown :: proc () {
 begin :: proc (size: Vec2i, cmd_buffer: ^sdl.GPUCommandBuffer = nil, texture: ^sdl.GPUTexture = nil) -> bool {
 	assert(_gp.initialized)
 
+	// A new outermost frame starts with a clean slate.
+	if len(_gp.states) == 0 {
+		_last_error = .None
+	}
+
 	assert(len(_gp.states) < cap(_gp.states))
 	append(&_gp.states, _gp.state)
 
