@@ -7,7 +7,7 @@ import gp ".."
 
 RENDER_TEXTURE_FRAMES :: 5
 
-_render_texture:    gp.Render_Texture
+_render_textures:  [RENDER_TEXTURE_FRAMES]gp.Render_Texture
 _render_source:     gp.Image
 _render_cmd_buffer: ^sdl.GPUCommandBuffer
 
@@ -20,17 +20,20 @@ sample_render_texture_setup :: proc () {
 	sdl.DestroySurface(surface)
 }
 
-sample_render_texture_get_render_texture :: proc () -> gp.Render_Texture {
+// Each recursion level renders into its own texture.
+sample_render_texture_get_render_texture :: proc (level: int) -> gp.Render_Texture {
+	assert(level >= 0 && level < RENDER_TEXTURE_FRAMES)
+
 	window_width, window_height: c.int
 	sdl.GetWindowSize(_context.window, &window_width, &window_height)
 	window_size := gp.Vec2i{i32(window_width), i32(window_height)}
 
-	if window_size != gp.get_render_texture_size(_render_texture) {
-		gp.destroy_render_texture(_render_texture)
-		_render_texture = gp.make_render_texture(window_size) or_else panic(gp.get_error_message(gp.get_last_error()))
+	if window_size != gp.get_render_texture_size(_render_textures[level]) {
+		gp.destroy_render_texture(_render_textures[level])
+		_render_textures[level] = gp.make_render_texture(window_size) or_else panic(gp.get_error_message(gp.get_last_error()))
 	}
 
-	return _render_texture
+	return _render_textures[level]
 }
 
 sample_render_texture_render :: proc (dt: u64, cmd_buffer: ^sdl.GPUCommandBuffer) {
@@ -41,24 +44,34 @@ sample_render_texture_render :: proc (dt: u64, cmd_buffer: ^sdl.GPUCommandBuffer
 	gp.set_color({90, 10, 160, 255})
 	gp.clear()
 
-	for i in 0..<RENDER_TEXTURE_FRAMES {
-		opacity := f32(RENDER_TEXTURE_FRAMES-i) / RENDER_TEXTURE_FRAMES
-		gp.translate(10, 30)
-		draw_nested_frame(opacity)
-	}
+	draw_nested_frame(0)
+
+	gp.translate(60, 20)
+
+	draw_nested_frame(0)
 }
 
 sample_render_texture_shutdown :: proc () {
 	gp.destroy_image(_render_source)
-	gp.destroy_render_texture(_render_texture)
+	for texture in _render_textures {
+		gp.destroy_render_texture(texture)
+	}
 }
 
-draw_nested_frame :: proc (opacity: f32) {
+draw_nested_frame :: proc (frame_idx: int) {
+
+	if frame_idx >= RENDER_TEXTURE_FRAMES do return
+
+	gp.transform_push()
+	defer gp.transform_pop()
+
+	gp.translate(10, 30)
+	opacity := f32(RENDER_TEXTURE_FRAMES-frame_idx) / RENDER_TEXTURE_FRAMES
 
 	cmd_buffer := _render_cmd_buffer
 	assert(cmd_buffer != nil)
 
-	render_texture := sample_render_texture_get_render_texture()
+	render_texture := sample_render_texture_get_render_texture(frame_idx)
 
 	if !gp.begin_render_texture(cmd_buffer, render_texture) {
 		log.errorf("nested begin error: %s", gp.get_error_message(gp.get_last_error()))
@@ -103,6 +116,8 @@ draw_nested_frame :: proc (opacity: f32) {
 		src = {0, Vec2(gp.get_image_size(_render_source))},
 	})
 	gp.reset_image(0)
+
+	draw_nested_frame(frame_idx+1)
 
 	if !gp.end_render_texture() {
 		log.errorf("nested frame error: %s", gp.get_error_message(gp.get_last_error()))
